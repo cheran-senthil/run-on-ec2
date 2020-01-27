@@ -35,16 +35,16 @@ var (
 
 			svc := ec2.New(sess)
 
-			keyName := fmt.Sprintf("run-on-ec2-%s.pem", region)
+			keyName := fmt.Sprintf("run-on-ec2-%s", region)
 			result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 			if err != nil {
 				fmt.Println("Could not create key pair", err)
 			} else {
 				fmt.Println("Saving key pair")
-				keyFile, _ := os.Create(keyName)
-				keyFile.WriteString(*result.KeyMaterial)
-				keyFile.Sync()
-				keyFile.Close()
+				pemFile, _ := os.Create(keyName)
+				pemFile.WriteString(*result.KeyMaterial)
+				pemFile.Sync()
+				pemFile.Close()
 			}
 
 			if spot {
