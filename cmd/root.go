@@ -11,69 +11,76 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "run-on-ec2",
-	Short: "CLI to quickly execute scripts on an AWS EC2 instance",
-	Run: func(cmd *cobra.Command, args []string) {
-		instanceType, _ := cmd.Flags().GetString("instance-type")
-		region, _ := cmd.Flags().GetString("region")
-		spot, _ := cmd.Flags().GetBool("spot")
+var (
+	regionImageIdMap = map[string]string{
+		"eu-central-1": "ami-06e882db7f01fad97",
+	}
 
-		sess, err := session.NewSession(&aws.Config{
-			Region:      aws.String(region),
-			Credentials: credentials.NewSharedCredentials("", "run-on-ec2"),
-		})
-		if err != nil {
-			fmt.Println("Could not create session", err)
-		}
+	rootCmd = &cobra.Command{
+		Use:   "run-on-ec2",
+		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
+		Run: func(cmd *cobra.Command, args []string) {
+			instanceType, _ := cmd.Flags().GetString("instance-type")
+			region, _ := cmd.Flags().GetString("region")
+			spot, _ := cmd.Flags().GetBool("spot")
+			imageId := regionImageIdMap[region]
 
-		svc := ec2.New(sess)
+			sess, err := session.NewSession(&aws.Config{
+				Region:      aws.String(region),
+				Credentials: credentials.NewSharedCredentials("", "run-on-ec2"),
+			})
+			if err != nil {
+				fmt.Println("Could not create session", err)
+			}
 
-		keyName := fmt.Sprintf("run-on-ec2-%s.pem", region)
-		result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
-		if err != nil {
-			fmt.Println("Could not create key pair", err)
-		} else {
-			fmt.Println("Saving key pair")
-			keyFile, _ := os.Create(keyName)
-			keyFile.WriteString(*result.KeyMaterial)
-			keyFile.Sync()
-			keyFile.Close()
-		}
+			svc := ec2.New(sess)
 
-		if spot {
-			requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
-				LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
-					ImageId:      aws.String("ami-06e882db7f01fad97"),
+			keyName := fmt.Sprintf("run-on-ec2-%s.pem", region)
+			result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
+			if err != nil {
+				fmt.Println("Could not create key pair", err)
+			} else {
+				fmt.Println("Saving key pair")
+				keyFile, _ := os.Create(keyName)
+				keyFile.WriteString(*result.KeyMaterial)
+				keyFile.Sync()
+				keyFile.Close()
+			}
+
+			if spot {
+				requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
+					LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
+						ImageId:      aws.String(imageId),
+						InstanceType: aws.String(instanceType),
+						KeyName:      aws.String(keyName),
+					},
+				})
+
+				if err != nil {
+					fmt.Println("Could not request spot instance", err)
+					return
+				}
+
+				fmt.Println(requestResult)
+			} else {
+				runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
+					ImageId:      aws.String(imageId),
 					InstanceType: aws.String(instanceType),
+					MinCount:     aws.Int64(1),
+					MaxCount:     aws.Int64(1),
 					KeyName:      aws.String(keyName),
-				},
-			})
+				})
 
-			if err != nil {
-				fmt.Println("Could not request spot instance", err)
-				return
+				if err != nil {
+					fmt.Println("Could not create instance", err)
+					return
+				}
+
+				fmt.Println(runResult)
 			}
-
-			fmt.Println(requestResult)
-		} else {
-			runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
-				ImageId:      aws.String("ami-06e882db7f01fad97"),
-				InstanceType: aws.String(instanceType),
-				MinCount:     aws.Int64(1),
-				MaxCount:     aws.Int64(1),
-				KeyName:      aws.String(keyName),
-			})
-
-			if err != nil {
-				fmt.Println("Could not create instance", err)
-				return
-			}
-
-			fmt.Println(runResult)
-		}
-	},
-}
+		},
+	}
+)
 
 // Execute executes the root command.
 func Execute() error {
