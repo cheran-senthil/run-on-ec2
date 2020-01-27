@@ -28,9 +28,14 @@ var rootCmd = &cobra.Command{
 		}
 
 		svc := ec2.New(sess)
-		result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String("run-on-ec2")})
-		if err == nil {
-			keyFile, _ := os.Create("run-on-ec2.pem")
+
+		keyName := fmt.Sprintf("run-on-ec2-%s.pem", region)
+		result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
+		if err != nil {
+			fmt.Println("Could not create key pair", err)
+		} else {
+			fmt.Println("Saving key pair")
+			keyFile, _ := os.Create(keyName)
 			keyFile.WriteString(*result.KeyMaterial)
 			keyFile.Sync()
 			keyFile.Close()
@@ -41,7 +46,7 @@ var rootCmd = &cobra.Command{
 				LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
 					ImageId:      aws.String("ami-06e882db7f01fad97"),
 					InstanceType: aws.String(instanceType),
-					KeyName:      aws.String("run-on-ec2"),
+					KeyName:      aws.String(keyName),
 				},
 			})
 
@@ -57,7 +62,7 @@ var rootCmd = &cobra.Command{
 				InstanceType: aws.String(instanceType),
 				MinCount:     aws.Int64(1),
 				MaxCount:     aws.Int64(1),
-				KeyName:      aws.String("run-on-ec2"),
+				KeyName:      aws.String(keyName),
 			})
 
 			if err != nil {
