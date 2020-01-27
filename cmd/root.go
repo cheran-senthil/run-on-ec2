@@ -20,9 +20,11 @@ var (
 		Use:   "run-on-ec2",
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
 		Run: func(cmd *cobra.Command, args []string) {
-			instanceType, _ := cmd.Flags().GetString("instance-type")
 			region, _ := cmd.Flags().GetString("region")
 			spot, _ := cmd.Flags().GetBool("spot")
+			instanceType, _ := cmd.Flags().GetString("instance-type")
+			volume, _ := cmd.Flags().GetInt64("volume")
+
 			imageID := regionImageIDMap[region]
 
 			sess, err := session.NewSession(&aws.Config{
@@ -47,12 +49,23 @@ var (
 				pemFile.Close()
 			}
 
+			blockDeviceMappings := []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
+				DeviceName: aws.String("/dev/xvda"),
+				Ebs: &ec2.EbsBlockDevice{
+					DeleteOnTermination: aws.Bool(true),
+					Encrypted:           aws.Bool(false),
+					VolumeSize:          aws.Int64(volume),
+					VolumeType:          aws.String("gp2"),
+				},
+			}}
+
 			if spot {
 				requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
 					LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
-						ImageId:      aws.String(imageID),
-						InstanceType: aws.String(instanceType),
-						KeyName:      aws.String(keyName),
+						ImageId:             aws.String(imageID),
+						InstanceType:        aws.String(instanceType),
+						KeyName:             aws.String(keyName),
+						BlockDeviceMappings: blockDeviceMappings,
 					},
 				})
 
@@ -64,11 +77,12 @@ var (
 				fmt.Println(requestResult)
 			} else {
 				runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
-					ImageId:      aws.String(imageID),
-					InstanceType: aws.String(instanceType),
-					MinCount:     aws.Int64(1),
-					MaxCount:     aws.Int64(1),
-					KeyName:      aws.String(keyName),
+					ImageId:             aws.String(imageID),
+					InstanceType:        aws.String(instanceType),
+					MinCount:            aws.Int64(1),
+					MaxCount:            aws.Int64(1),
+					KeyName:             aws.String(keyName),
+					BlockDeviceMappings: blockDeviceMappings,
 				})
 
 				if err != nil {
@@ -88,8 +102,9 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
+	rootCmd.Flags().StringP("input", "i", "input.txt", "input file/folder name")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
-	rootCmd.Flags().IntP("volume", "v", 1, "volume attached in GiB")
+	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
+	rootCmd.Flags().Int64P("volume", "v", 1, "volume attached in GiB")
 }
