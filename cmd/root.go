@@ -106,5 +106,5 @@ func init() {
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
-	rootCmd.Flags().Int64P("volume", "v", 1, "volume attached in GiB")
+	rootCmd.Flags().Int64P("volume", "v", 4, "volume attached in GiB")
 }
