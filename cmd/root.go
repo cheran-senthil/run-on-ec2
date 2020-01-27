@@ -33,9 +33,6 @@ var rootCmd = &cobra.Command{
 				LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
 					ImageId:      aws.String("ami-06e882db7f01fad97"),
 					InstanceType: aws.String(instanceType),
-					SecurityGroupIds: []*string{
-						aws.String("sg-5ee7a43a"),
-					},
 				},
 			})
 
@@ -48,7 +45,7 @@ var rootCmd = &cobra.Command{
 		} else {
 			runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
 				ImageId:      aws.String("ami-06e882db7f01fad97"),
-				InstanceType: aws.String("t2.micro"),
+				InstanceType: aws.String(instanceType),
 				MinCount:     aws.Int64(1),
 				MaxCount:     aws.Int64(1),
 			})
