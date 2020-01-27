@@ -20,7 +20,7 @@ var rootCmd = &cobra.Command{
 
 		sess, err := session.NewSession(&aws.Config{
 			Region:      aws.String(region),
-			Credentials: credentials.NewSharedCredentials("", "private"),
+			Credentials: credentials.NewSharedCredentials("", "run-on-ec2"),
 		})
 		if err != nil {
 			fmt.Println("Could not create session", err)
@@ -29,7 +29,7 @@ var rootCmd = &cobra.Command{
 		svc := ec2.New(sess)
 
 		if isSpot {
-			runResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
+			requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
 				LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
 					ImageId:      aws.String("ami-06e882db7f01fad97"),
 					InstanceType: aws.String(instanceType),
@@ -41,7 +41,7 @@ var rootCmd = &cobra.Command{
 				return
 			}
 
-			fmt.Println(runResult)
+			fmt.Println(requestResult)
 		} else {
 			runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
 				ImageId:      aws.String("ami-06e882db7f01fad97"),
