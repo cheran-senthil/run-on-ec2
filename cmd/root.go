@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	regionImageIdMap = map[string]string{
+	regionImageIDMap = map[string]string{
 		"eu-central-1": "ami-06e882db7f01fad97",
 	}
 
@@ -23,7 +23,7 @@ var (
 			instanceType, _ := cmd.Flags().GetString("instance-type")
 			region, _ := cmd.Flags().GetString("region")
 			spot, _ := cmd.Flags().GetBool("spot")
-			imageId := regionImageIdMap[region]
+			imageID := regionImageIDMap[region]
 
 			sess, err := session.NewSession(&aws.Config{
 				Region:      aws.String(region),
@@ -50,7 +50,7 @@ var (
 			if spot {
 				requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
 					LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
-						ImageId:      aws.String(imageId),
+						ImageId:      aws.String(imageID),
 						InstanceType: aws.String(instanceType),
 						KeyName:      aws.String(keyName),
 					},
@@ -64,7 +64,7 @@ var (
 				fmt.Println(requestResult)
 			} else {
 				runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
-					ImageId:      aws.String(imageId),
+					ImageId:      aws.String(imageID),
 					InstanceType: aws.String(instanceType),
 					MinCount:     aws.Int64(1),
 					MaxCount:     aws.Int64(1),
