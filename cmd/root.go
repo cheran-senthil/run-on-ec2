@@ -29,30 +29,8 @@ var (
 			spot, _ := cmd.Flags().GetBool("spot")
 			instanceType, _ := cmd.Flags().GetString("instance")
 			volume, _ := cmd.Flags().GetInt64("volume")
-			imageID := regionImageIDMap[region]
-
-			svc, err := newEC2Client(region)
-			if err != nil {
-				fmt.Println("Could not create EC2 client", err)
-				return
-			}
-
-			keyName, err := getKeyPair(svc, region)
-			if err != nil {
-				fmt.Println("Could not get key pair", err)
-				return
-			}
-
-			securityGroupIds, err := getSecurityGroup(svc)
-			if err != nil {
-				fmt.Println("Could not get security group", err)
-				return
-			}
-			if spot {
-				fmt.Println(runSpotInstance(svc, imageID, instanceType, keyName, securityGroupIds, volume))
-			} else {
-				fmt.Println(runInstance(svc, imageID, instanceType, keyName, securityGroupIds, volume))
-			}
+			instance, err := runInstance(spot, instanceType, region, volume)
+			fmt.Println(instance, err)
 		},
 	}
 )
@@ -69,6 +47,25 @@ func newEC2Client(region string) (*ec2.EC2, error) {
 	return ec2.New(sess), nil
 }
 
+func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.BlockDeviceMapping, error) {
+	describeRes, err := svc.DescribeImages(&ec2.DescribeImagesInput{
+		ImageIds: aws.StringSlice([]string{regionImageIDMap[region]}),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
+		DeviceName: describeRes.Images[0].RootDeviceName,
+		Ebs: &ec2.EbsBlockDevice{
+			DeleteOnTermination: aws.Bool(true),
+			Encrypted:           aws.Bool(false),
+			VolumeSize:          aws.Int64(volume),
+			VolumeType:          aws.String("gp2"),
+		},
+	}}, nil
+}
+
 func getKeyPair(svc *ec2.EC2, region string) (string, error) {
 	keyName := fmt.Sprintf("%s-%s", name, region)
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
@@ -81,10 +78,65 @@ func getKeyPair(svc *ec2.EC2, region string) (string, error) {
 		return "", err
 	}
 
+	defer pemFile.Close()
 	pemFile.WriteString(*result.KeyMaterial)
 	pemFile.Sync()
-	pemFile.Close()
+
 	return keyName, nil
+}
+
+func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
+	result, err := svc.DescribeVpcs(nil)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to describe VPCs, %v", err)
+	}
+	if len(result.Vpcs) == 0 {
+		return nil, fmt.Errorf("No VPCs found to associate security group with")
+	}
+
+	vpcID := *result.Vpcs[0].VpcId
+	createRes, err := svc.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String(name),
+		Description: aws.String(name),
+		VpcId:       aws.String(vpcID),
+	})
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case "InvalidVpcID.NotFound":
+				return nil, fmt.Errorf("Unable to find VPC with ID %s", vpcID)
+			case "InvalidGroup.Duplicate":
+				return nil, fmt.Errorf("Security group %s already exists", name)
+			}
+		}
+		return nil, fmt.Errorf("Unable to create security group %s, %v", name, err)
+	}
+
+	_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
+		GroupName: aws.String(name),
+		IpPermissions: []*ec2.IpPermission{
+			(&ec2.IpPermission{}).
+				SetIpProtocol("tcp").
+				SetFromPort(80).
+				SetToPort(80).
+				SetIpRanges([]*ec2.IpRange{
+					{CidrIp: aws.String("0.0.0.0/0")},
+				}),
+			(&ec2.IpPermission{}).
+				SetIpProtocol("tcp").
+				SetFromPort(22).
+				SetToPort(22).
+				SetIpRanges([]*ec2.IpRange{
+					(&ec2.IpRange{}).
+						SetCidrIp("0.0.0.0/0"),
+				}),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("Unable to set security group %s ingress, %v", name, err)
+	}
+
+	return []*string{createRes.GroupId}, nil
 }
 
 func getSecurityGroup(svc *ec2.EC2) ([]*string, error) {
@@ -92,88 +144,13 @@ func getSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 		GroupNames: aws.StringSlice([]string{name}),
 	})
 	if err != nil {
-		result, err := svc.DescribeVpcs(nil)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to describe VPCs, %v", err)
-		}
-		if len(result.Vpcs) == 0 {
-			return nil, fmt.Errorf("No VPCs found to associate security group with")
-		}
-
-		vpcID := *result.Vpcs[0].VpcId
-		createRes, err := svc.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
-			GroupName:   aws.String(name),
-			Description: aws.String(name),
-			VpcId:       aws.String(vpcID),
-		})
-		if err != nil {
-			if aerr, ok := err.(awserr.Error); ok {
-				switch aerr.Code() {
-				case "InvalidVpcID.NotFound":
-					return nil, fmt.Errorf("Unable to find VPC with ID %s", vpcID)
-				case "InvalidGroup.Duplicate":
-					return nil, fmt.Errorf("Security group %s already exists", name)
-				}
-			}
-			return nil, fmt.Errorf("Unable to create security group %s, %v", name, err)
-		}
-
-		_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
-			GroupName: aws.String(name),
-			IpPermissions: []*ec2.IpPermission{
-				(&ec2.IpPermission{}).
-					SetIpProtocol("tcp").
-					SetFromPort(80).
-					SetToPort(80).
-					SetIpRanges([]*ec2.IpRange{
-						{CidrIp: aws.String("0.0.0.0/0")},
-					}),
-				(&ec2.IpPermission{}).
-					SetIpProtocol("tcp").
-					SetFromPort(22).
-					SetToPort(22).
-					SetIpRanges([]*ec2.IpRange{
-						(&ec2.IpRange{}).
-							SetCidrIp("0.0.0.0/0"),
-					}),
-			},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("Unable to set security group %s ingress, %v", name, err)
-		}
-
-		return []*string{createRes.GroupId}, nil
+		return createSecurityGroup(svc)
 	}
 
 	return []*string{result.SecurityGroups[0].GroupId}, nil
 }
 
-func volumeToBlockDeviceMappings(volume int64) []*ec2.BlockDeviceMapping {
-	return []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
-		DeviceName: aws.String("/dev/xvda"),
-		Ebs: &ec2.EbsBlockDevice{
-			DeleteOnTermination: aws.Bool(true),
-			Encrypted:           aws.Bool(false),
-			VolumeSize:          aws.Int64(volume),
-			VolumeType:          aws.String("gp2"),
-		},
-	}}
-}
-
-func runSpotInstance(svc *ec2.EC2, imageID, instanceType, keyName string, securityGroupIds []*string, volume int64) (*ec2.Instance, error) {
-	requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
-		LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
-			ImageId:          aws.String(imageID),
-			InstanceType:     aws.String(instanceType),
-			KeyName:          aws.String(keyName),
-			SecurityGroupIds: securityGroupIds,
-			// BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
+func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutput) string {
 	describeInp := &ec2.DescribeSpotInstanceRequestsInput{
 		SpotInstanceRequestIds: []*string{requestResult.SpotInstanceRequests[0].SpotInstanceRequestId},
 	}
@@ -184,35 +161,72 @@ func runSpotInstance(svc *ec2.EC2, imageID, instanceType, keyName string, securi
 		time.Sleep(time.Second)
 	}
 
-	ec2Description, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
-		InstanceIds: []*string{describeRes.SpotInstanceRequests[0].InstanceId},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return ec2Description.Reservations[0].Instances[0], nil
+	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
 }
 
-func runInstance(svc *ec2.EC2, imageID, instanceType, keyName string, securityGroupIds []*string, volume int64) (*ec2.Instance, error) {
-	runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
-		ImageId:          aws.String(imageID),
-		InstanceType:     aws.String(instanceType),
-		MinCount:         aws.Int64(1),
-		MaxCount:         aws.Int64(1),
-		KeyName:          aws.String(keyName),
-		SecurityGroupIds: securityGroupIds,
-		// BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
+func runInstance(spot bool, instanceType, region string, volume int64) (*ec2.Instance, error) {
+	imageID := regionImageIDMap[region]
+	svc, err := newEC2Client(region)
+	if err != nil {
+		return nil, fmt.Errorf("Could not create EC2 client, %v", err)
+	}
+
+	blockDeviceMappings, err := getBlockDeviceMapping(svc, region, volume)
+	if err != nil {
+		return nil, fmt.Errorf("Could not get block device mappings, %v", err)
+	}
+
+	keyName, err := getKeyPair(svc, region)
+	if err != nil {
+		return nil, fmt.Errorf("Could not get key pair, %v", err)
+	}
+
+	securityGroupIds, err := getSecurityGroup(svc)
+	if err != nil {
+		return nil, fmt.Errorf("Could not get security group, %v", err)
+	}
+
+	var instanceID string
+	if spot {
+		requestRes, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
+			LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
+				BlockDeviceMappings: blockDeviceMappings,
+				ImageId:             aws.String(imageID),
+				InstanceType:        aws.String(instanceType),
+				KeyName:             aws.String(keyName),
+				SecurityGroupIds:    securityGroupIds,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		instanceID = getSpotInstanceID(svc, requestRes)
+	} else {
+		runRes, err := svc.RunInstances(&ec2.RunInstancesInput{
+			BlockDeviceMappings: blockDeviceMappings,
+			ImageId:             aws.String(imageID),
+			InstanceType:        aws.String(instanceType),
+			MinCount:            aws.Int64(1),
+			MaxCount:            aws.Int64(1),
+			KeyName:             aws.String(keyName),
+			SecurityGroupIds:    securityGroupIds,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		instanceID = aws.StringValue(runRes.Instances[0].InstanceId)
+	}
+
+	describeInstancesRes, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: aws.StringSlice([]string{instanceID}),
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	ec2Description, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
-		InstanceIds: []*string{runResult.Instances[0].InstanceId},
-	})
-
-	return ec2Description.Reservations[0].Instances[0], nil
+	return describeInstancesRes.Reservations[0].Instances[0], nil
 }
 
 // Execute executes the root command.
@@ -225,5 +239,5 @@ func init() {
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
-	rootCmd.Flags().Int64P("volume", "v", 4, "volume attached in GiB")
+	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
 }
