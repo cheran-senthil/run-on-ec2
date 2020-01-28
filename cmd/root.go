@@ -27,16 +27,12 @@ var (
 			volume, _ := cmd.Flags().GetInt64("volume")
 			imageID := regionImageIDMap[region]
 
-			sess, err := session.NewSession(&aws.Config{
-				Region:      aws.String(region),
-				Credentials: credentials.NewSharedCredentials("", "run-on-ec2"),
-			})
+			svc, err := newEC2Client(region)
 			if err != nil {
-				fmt.Println("Could not create session", err)
+				fmt.Println("Could not create EC2 client", err)
 				return
 			}
 
-			svc := ec2.New(sess)
 			keyName, err := createKeyPair(svc, region)
 			if err != nil {
 				fmt.Println("Could not create key pair", err)
@@ -51,6 +47,18 @@ var (
 		},
 	}
 )
+
+func newEC2Client(region string) (*ec2.EC2, error) {
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String(region),
+		Credentials: credentials.NewSharedCredentials("", "run-on-ec2"),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ec2.New(sess), nil
+}
 
 func createKeyPair(svc *ec2.EC2, region string) (string, error) {
 	keyName := fmt.Sprintf("run-on-ec2-%s", region)
