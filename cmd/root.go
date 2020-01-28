@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -22,9 +23,8 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			region, _ := cmd.Flags().GetString("region")
 			spot, _ := cmd.Flags().GetBool("spot")
-			instanceType, _ := cmd.Flags().GetString("instance-type")
+			instanceType, _ := cmd.Flags().GetString("instance")
 			volume, _ := cmd.Flags().GetInt64("volume")
-
 			imageID := regionImageIDMap[region]
 
 			sess, err := session.NewSession(&aws.Config{
@@ -33,68 +33,107 @@ var (
 			})
 			if err != nil {
 				fmt.Println("Could not create session", err)
+				return
 			}
 
 			svc := ec2.New(sess)
-
-			keyName := fmt.Sprintf("run-on-ec2-%s", region)
-			result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
+			keyName, err := createKeyPair(svc, region)
 			if err != nil {
 				fmt.Println("Could not create key pair", err)
-			} else {
-				fmt.Println("Saving key pair")
-				pemFile, _ := os.Create(keyName)
-				pemFile.WriteString(*result.KeyMaterial)
-				pemFile.Sync()
-				pemFile.Close()
+				return
 			}
 
-			blockDeviceMappings := []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
-				DeviceName: aws.String("/dev/xvda"),
-				Ebs: &ec2.EbsBlockDevice{
-					DeleteOnTermination: aws.Bool(true),
-					Encrypted:           aws.Bool(false),
-					VolumeSize:          aws.Int64(volume),
-					VolumeType:          aws.String("gp2"),
-				},
-			}}
-
 			if spot {
-				requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
-					LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
-						ImageId:             aws.String(imageID),
-						InstanceType:        aws.String(instanceType),
-						KeyName:             aws.String(keyName),
-						BlockDeviceMappings: blockDeviceMappings,
-					},
-				})
-
-				if err != nil {
-					fmt.Println("Could not request spot instance", err)
-					return
-				}
-
-				fmt.Println(requestResult)
+				fmt.Println(runSpotInstance(svc, imageID, instanceType, keyName, volume))
 			} else {
-				runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
-					ImageId:             aws.String(imageID),
-					InstanceType:        aws.String(instanceType),
-					MinCount:            aws.Int64(1),
-					MaxCount:            aws.Int64(1),
-					KeyName:             aws.String(keyName),
-					BlockDeviceMappings: blockDeviceMappings,
-				})
-
-				if err != nil {
-					fmt.Println("Could not create instance", err)
-					return
-				}
-
-				fmt.Println(runResult)
+				fmt.Println(runInstance(svc, imageID, instanceType, keyName, volume))
 			}
 		},
 	}
 )
+
+func createKeyPair(svc *ec2.EC2, region string) (string, error) {
+	keyName := fmt.Sprintf("run-on-ec2-%s", region)
+	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
+	if err != nil {
+		return keyName, nil
+	}
+
+	pemFile, err := os.Create(keyName)
+	if err != nil {
+		return "", err
+	}
+
+	pemFile.WriteString(*result.KeyMaterial)
+	pemFile.Sync()
+	pemFile.Close()
+	return keyName, nil
+}
+
+func volumeToBlockDeviceMappings(volume int64) []*ec2.BlockDeviceMapping {
+	return []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
+		DeviceName: aws.String("/dev/xvda"),
+		Ebs: &ec2.EbsBlockDevice{
+			DeleteOnTermination: aws.Bool(true),
+			Encrypted:           aws.Bool(false),
+			VolumeSize:          aws.Int64(volume),
+			VolumeType:          aws.String("gp2"),
+		},
+	}}
+}
+
+func runSpotInstance(svc *ec2.EC2, imageID, instanceType, keyName string, volume int64) (*ec2.Instance, error) {
+	requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
+		LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
+			ImageId:             aws.String(imageID),
+			InstanceType:        aws.String(instanceType),
+			KeyName:             aws.String(keyName),
+			BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	describeSIRInput := &ec2.DescribeSpotInstanceRequestsInput{
+		SpotInstanceRequestIds: []*string{requestResult.SpotInstanceRequests[0].SpotInstanceRequestId},
+	}
+
+	describeSIROutput, err := svc.DescribeSpotInstanceRequests(describeSIRInput)
+	for err != nil || len(describeSIROutput.SpotInstanceRequests) == 0 || describeSIROutput.SpotInstanceRequests[0].InstanceId == nil {
+		describeSIROutput, err = svc.DescribeSpotInstanceRequests(describeSIRInput)
+		time.Sleep(time.Second)
+	}
+
+	ec2Description, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: []*string{describeSIROutput.SpotInstanceRequests[0].InstanceId},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ec2Description.Reservations[0].Instances[0], nil
+}
+
+func runInstance(svc *ec2.EC2, imageID, instanceType, keyName string, volume int64) (*ec2.Instance, error) {
+	runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
+		ImageId:             aws.String(imageID),
+		InstanceType:        aws.String(instanceType),
+		MinCount:            aws.Int64(1),
+		MaxCount:            aws.Int64(1),
+		KeyName:             aws.String(keyName),
+		BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ec2Description, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
+		InstanceIds: []*string{runResult.Instances[0].InstanceId},
+	})
+
+	return ec2Description.Reservations[0].Instances[0], nil
+}
 
 // Execute executes the root command.
 func Execute() error {
