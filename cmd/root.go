@@ -6,19 +6,23 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/spf13/cobra"
 )
 
+const name = "run-on-ec2"
+
 var (
 	regionImageIDMap = map[string]string{
+		"us-east-2":    "ami-0470431e11a734fd9",
 		"eu-central-1": "ami-06e882db7f01fad97",
 	}
 
 	rootCmd = &cobra.Command{
-		Use:   "run-on-ec2",
+		Use:   name,
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
 		Run: func(cmd *cobra.Command, args []string) {
 			region, _ := cmd.Flags().GetString("region")
@@ -33,16 +37,21 @@ var (
 				return
 			}
 
-			keyName, err := createKeyPair(svc, region)
+			keyName, err := getKeyPair(svc, region)
 			if err != nil {
-				fmt.Println("Could not create key pair", err)
+				fmt.Println("Could not get key pair", err)
 				return
 			}
 
+			securityGroupIds, err := getSecurityGroup(svc)
+			if err != nil {
+				fmt.Println("Could not get security group", err)
+				return
+			}
 			if spot {
-				fmt.Println(runSpotInstance(svc, imageID, instanceType, keyName, volume))
+				fmt.Println(runSpotInstance(svc, imageID, instanceType, keyName, securityGroupIds, volume))
 			} else {
-				fmt.Println(runInstance(svc, imageID, instanceType, keyName, volume))
+				fmt.Println(runInstance(svc, imageID, instanceType, keyName, securityGroupIds, volume))
 			}
 		},
 	}
@@ -51,7 +60,7 @@ var (
 func newEC2Client(region string) (*ec2.EC2, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String(region),
-		Credentials: credentials.NewSharedCredentials("", "run-on-ec2"),
+		Credentials: credentials.NewSharedCredentials("", name),
 	})
 	if err != nil {
 		return nil, err
@@ -60,8 +69,8 @@ func newEC2Client(region string) (*ec2.EC2, error) {
 	return ec2.New(sess), nil
 }
 
-func createKeyPair(svc *ec2.EC2, region string) (string, error) {
-	keyName := fmt.Sprintf("run-on-ec2-%s", region)
+func getKeyPair(svc *ec2.EC2, region string) (string, error) {
+	keyName := fmt.Sprintf("%s-%s", name, region)
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 	if err != nil {
 		return keyName, nil
@@ -78,6 +87,67 @@ func createKeyPair(svc *ec2.EC2, region string) (string, error) {
 	return keyName, nil
 }
 
+func getSecurityGroup(svc *ec2.EC2) ([]*string, error) {
+	result, err := svc.DescribeSecurityGroups(&ec2.DescribeSecurityGroupsInput{
+		GroupNames: aws.StringSlice([]string{name}),
+	})
+	if err != nil {
+		result, err := svc.DescribeVpcs(nil)
+		if err != nil {
+			return nil, fmt.Errorf("Unable to describe VPCs, %v", err)
+		}
+		if len(result.Vpcs) == 0 {
+			return nil, fmt.Errorf("No VPCs found to associate security group with")
+		}
+
+		vpcID := *result.Vpcs[0].VpcId
+		createRes, err := svc.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
+			GroupName:   aws.String(name),
+			Description: aws.String(name),
+			VpcId:       aws.String(vpcID),
+		})
+		if err != nil {
+			if aerr, ok := err.(awserr.Error); ok {
+				switch aerr.Code() {
+				case "InvalidVpcID.NotFound":
+					return nil, fmt.Errorf("Unable to find VPC with ID %s", vpcID)
+				case "InvalidGroup.Duplicate":
+					return nil, fmt.Errorf("Security group %s already exists", name)
+				}
+			}
+			return nil, fmt.Errorf("Unable to create security group %s, %v", name, err)
+		}
+
+		_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
+			GroupName: aws.String(name),
+			IpPermissions: []*ec2.IpPermission{
+				(&ec2.IpPermission{}).
+					SetIpProtocol("tcp").
+					SetFromPort(80).
+					SetToPort(80).
+					SetIpRanges([]*ec2.IpRange{
+						{CidrIp: aws.String("0.0.0.0/0")},
+					}),
+				(&ec2.IpPermission{}).
+					SetIpProtocol("tcp").
+					SetFromPort(22).
+					SetToPort(22).
+					SetIpRanges([]*ec2.IpRange{
+						(&ec2.IpRange{}).
+							SetCidrIp("0.0.0.0/0"),
+					}),
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("Unable to set security group %s ingress, %v", name, err)
+		}
+
+		return []*string{createRes.GroupId}, nil
+	}
+
+	return []*string{result.SecurityGroups[0].GroupId}, nil
+}
+
 func volumeToBlockDeviceMappings(volume int64) []*ec2.BlockDeviceMapping {
 	return []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
 		DeviceName: aws.String("/dev/xvda"),
@@ -90,31 +160,32 @@ func volumeToBlockDeviceMappings(volume int64) []*ec2.BlockDeviceMapping {
 	}}
 }
 
-func runSpotInstance(svc *ec2.EC2, imageID, instanceType, keyName string, volume int64) (*ec2.Instance, error) {
+func runSpotInstance(svc *ec2.EC2, imageID, instanceType, keyName string, securityGroupIds []*string, volume int64) (*ec2.Instance, error) {
 	requestResult, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
 		LaunchSpecification: &ec2.RequestSpotLaunchSpecification{
-			ImageId:             aws.String(imageID),
-			InstanceType:        aws.String(instanceType),
-			KeyName:             aws.String(keyName),
-			BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
+			ImageId:          aws.String(imageID),
+			InstanceType:     aws.String(instanceType),
+			KeyName:          aws.String(keyName),
+			SecurityGroupIds: securityGroupIds,
+			// BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	describeSIRInput := &ec2.DescribeSpotInstanceRequestsInput{
+	describeInp := &ec2.DescribeSpotInstanceRequestsInput{
 		SpotInstanceRequestIds: []*string{requestResult.SpotInstanceRequests[0].SpotInstanceRequestId},
 	}
 
-	describeSIROutput, err := svc.DescribeSpotInstanceRequests(describeSIRInput)
-	for err != nil || len(describeSIROutput.SpotInstanceRequests) == 0 || describeSIROutput.SpotInstanceRequests[0].InstanceId == nil {
-		describeSIROutput, err = svc.DescribeSpotInstanceRequests(describeSIRInput)
+	describeRes, err := svc.DescribeSpotInstanceRequests(describeInp)
+	for err != nil || len(describeRes.SpotInstanceRequests) == 0 || describeRes.SpotInstanceRequests[0].InstanceId == nil {
+		describeRes, err = svc.DescribeSpotInstanceRequests(describeInp)
 		time.Sleep(time.Second)
 	}
 
 	ec2Description, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
-		InstanceIds: []*string{describeSIROutput.SpotInstanceRequests[0].InstanceId},
+		InstanceIds: []*string{describeRes.SpotInstanceRequests[0].InstanceId},
 	})
 	if err != nil {
 		return nil, err
@@ -123,14 +194,15 @@ func runSpotInstance(svc *ec2.EC2, imageID, instanceType, keyName string, volume
 	return ec2Description.Reservations[0].Instances[0], nil
 }
 
-func runInstance(svc *ec2.EC2, imageID, instanceType, keyName string, volume int64) (*ec2.Instance, error) {
+func runInstance(svc *ec2.EC2, imageID, instanceType, keyName string, securityGroupIds []*string, volume int64) (*ec2.Instance, error) {
 	runResult, err := svc.RunInstances(&ec2.RunInstancesInput{
-		ImageId:             aws.String(imageID),
-		InstanceType:        aws.String(instanceType),
-		MinCount:            aws.Int64(1),
-		MaxCount:            aws.Int64(1),
-		KeyName:             aws.String(keyName),
-		BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
+		ImageId:          aws.String(imageID),
+		InstanceType:     aws.String(instanceType),
+		MinCount:         aws.Int64(1),
+		MaxCount:         aws.Int64(1),
+		KeyName:          aws.String(keyName),
+		SecurityGroupIds: securityGroupIds,
+		// BlockDeviceMappings: volumeToBlockDeviceMappings(volume),
 	})
 	if err != nil {
 		return nil, err
