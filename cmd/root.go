@@ -59,7 +59,7 @@ func createKeyPair(svc *ec2.EC2, region string) (string, error) {
 		return keyName, nil
 	}
 
-	pemFile, err := os.Create(keyName)
+	pemFile, err := os.Create(fmt.Sprintf("%s.pem", keyName))
 	if err != nil {
 		return "", err
 	}
