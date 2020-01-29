@@ -165,9 +165,10 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 		SpotInstanceRequestIds: []*string{requestResult.SpotInstanceRequests[0].SpotInstanceRequestId},
 	}
 
-	var describeRes *ec2.DescribeSpotInstanceRequestsOutput
-	for describeRes, err := svc.DescribeSpotInstanceRequests(spotInstanceRequest); err != nil || len(describeRes.SpotInstanceRequests) == 0 || describeRes.SpotInstanceRequests[0].InstanceId == nil; time.Sleep(time.Second) {
+	describeRes, err := svc.DescribeSpotInstanceRequests(spotInstanceRequest)
+	for err != nil || len(describeRes.SpotInstanceRequests) == 0 || describeRes.SpotInstanceRequests[0].InstanceId == nil {
 		describeRes, err = svc.DescribeSpotInstanceRequests(spotInstanceRequest)
+		time.Sleep(time.Second)
 	}
 
 	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
