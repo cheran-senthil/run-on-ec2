@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -13,33 +14,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const name = "run-on-ec2"
-
 var (
+	name = "run-on-ec2"
+
 	regionImageIDMap = map[string]string{
 		"us-east-2":    "ami-0470431e11a734fd9",
 		"eu-central-1": "ami-06e882db7f01fad97",
 	}
 
-	authorizeInp = &ec2.AuthorizeSecurityGroupIngressInput{
-		GroupName: aws.String(name),
-		IpPermissions: []*ec2.IpPermission{
-			(&ec2.IpPermission{}).
-				SetIpProtocol("tcp").
-				SetFromPort(80).
-				SetToPort(80).
-				SetIpRanges([]*ec2.IpRange{
-					{CidrIp: aws.String("0.0.0.0/0")},
-				}),
-			(&ec2.IpPermission{}).
-				SetIpProtocol("tcp").
-				SetFromPort(22).
-				SetToPort(22).
-				SetIpRanges([]*ec2.IpRange{
-					(&ec2.IpRange{}).
-						SetCidrIp("0.0.0.0/0"),
-				}),
-		},
+	ipPermissions = []*ec2.IpPermission{
+		(&ec2.IpPermission{}).
+			SetIpProtocol("tcp").
+			SetFromPort(80).
+			SetToPort(80).
+			SetIpRanges([]*ec2.IpRange{
+				{CidrIp: aws.String("0.0.0.0/0")},
+			}),
+		(&ec2.IpPermission{}).
+			SetIpProtocol("tcp").
+			SetFromPort(22).
+			SetToPort(22).
+			SetIpRanges([]*ec2.IpRange{
+				(&ec2.IpRange{}).
+					SetCidrIp("0.0.0.0/0"),
+			}),
 	}
 
 	rootCmd = &cobra.Command{
@@ -111,11 +109,18 @@ func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Unable to describe VPCs, %v", err)
 	}
-	if len(result.Vpcs) == 0 {
-		return nil, fmt.Errorf("No VPCs found to associate security group with")
+
+	var vpcID string
+	for _, vpc := range result.Vpcs {
+		if aws.BoolValue(vpc.IsDefault) {
+			vpcID = aws.StringValue(vpc.VpcId)
+		}
 	}
 
-	vpcID := *result.Vpcs[0].VpcId
+	if vpcID == "" {
+		return nil, errors.New("No default VPC found to associate security group with")
+	}
+
 	createRes, err := svc.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
 		GroupName:   aws.String(name),
 		Description: aws.String(name),
@@ -133,7 +138,10 @@ func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 		return nil, fmt.Errorf("Unable to create security group %s, %v", name, err)
 	}
 
-	_, err = svc.AuthorizeSecurityGroupIngress(authorizeInp)
+	_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
+		GroupName:     aws.String(name),
+		IpPermissions: ipPermissions,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("Unable to set security group %s ingress, %v", name, err)
 	}
@@ -153,14 +161,13 @@ func getSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 }
 
 func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutput) string {
-	describeInp := &ec2.DescribeSpotInstanceRequestsInput{
+	spotInstanceRequest := &ec2.DescribeSpotInstanceRequestsInput{
 		SpotInstanceRequestIds: []*string{requestResult.SpotInstanceRequests[0].SpotInstanceRequestId},
 	}
 
-	describeRes, err := svc.DescribeSpotInstanceRequests(describeInp)
-	for err != nil || len(describeRes.SpotInstanceRequests) == 0 || describeRes.SpotInstanceRequests[0].InstanceId == nil {
-		describeRes, err = svc.DescribeSpotInstanceRequests(describeInp)
-		time.Sleep(time.Second)
+	var describeRes *ec2.DescribeSpotInstanceRequestsOutput
+	for describeRes, err := svc.DescribeSpotInstanceRequests(spotInstanceRequest); err != nil || len(describeRes.SpotInstanceRequests) == 0 || describeRes.SpotInstanceRequests[0].InstanceId == nil; time.Sleep(time.Second) {
+		describeRes, err = svc.DescribeSpotInstanceRequests(spotInstanceRequest)
 	}
 
 	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
@@ -237,7 +244,6 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.Flags().StringP("input", "i", "input.txt", "input file/folder name")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
