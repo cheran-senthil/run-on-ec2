@@ -18,8 +18,24 @@ var (
 	name = "run-on-ec2"
 
 	regionImageIDMap = map[string]string{
-		"us-east-2":    "ami-0470431e11a734fd9",
-		"eu-central-1": "ami-06e882db7f01fad97",
+		"us-east-1":      "ami-0f040c7d22aedeb27",
+		"us-east-2":      "ami-0470431e11a734fd9",
+		"us-west-1":      "ami-05cdd0c340f2889fe",
+		"us-west-2":      "ami-0b6363764d2a80871",
+		"ca-central-1":   "ami-01b3269d70a1de16c",
+		"eu-central-1":   "ami-06e882db7f01fad97",
+		"eu-north-1":     "ami-02ae88ed88290671a",
+		"eu-west-1":      "ami-08613bbdd5117c26e",
+		"eu-west-2":      "ami-020f8e712266ac616",
+		"eu-west-3":      "ami-01360f4ce2b7cc8df",
+		"ap-east-1":      "ami-17b3f666",
+		"ap-northeast-1": "ami-0830b6d0901519dfb",
+		"ap-northeast-2": "ami-0e479608b3609ee19",
+		"ap-south-1":     "ami-0280b0286f256a533",
+		"ap-southeast-1": "ami-0ebc029a114aa199e",
+		"ap-southeast-2": "ami-01fdf683a88ff498e",
+		"sa-east-1":      "ami-07183794882825eb4",
+		"me-south-1":     "ami-054bbb7ef03ab6c36",
 	}
 
 	ipPermissions = []*ec2.IpPermission{
