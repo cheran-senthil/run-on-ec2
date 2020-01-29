@@ -21,6 +21,27 @@ var (
 		"eu-central-1": "ami-06e882db7f01fad97",
 	}
 
+	authorizeInp = &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupName: aws.String(name),
+		IpPermissions: []*ec2.IpPermission{
+			(&ec2.IpPermission{}).
+				SetIpProtocol("tcp").
+				SetFromPort(80).
+				SetToPort(80).
+				SetIpRanges([]*ec2.IpRange{
+					{CidrIp: aws.String("0.0.0.0/0")},
+				}),
+			(&ec2.IpPermission{}).
+				SetIpProtocol("tcp").
+				SetFromPort(22).
+				SetToPort(22).
+				SetIpRanges([]*ec2.IpRange{
+					(&ec2.IpRange{}).
+						SetCidrIp("0.0.0.0/0"),
+				}),
+		},
+	}
+
 	rootCmd = &cobra.Command{
 		Use:   name,
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
@@ -112,26 +133,7 @@ func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 		return nil, fmt.Errorf("Unable to create security group %s, %v", name, err)
 	}
 
-	_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
-		GroupName: aws.String(name),
-		IpPermissions: []*ec2.IpPermission{
-			(&ec2.IpPermission{}).
-				SetIpProtocol("tcp").
-				SetFromPort(80).
-				SetToPort(80).
-				SetIpRanges([]*ec2.IpRange{
-					{CidrIp: aws.String("0.0.0.0/0")},
-				}),
-			(&ec2.IpPermission{}).
-				SetIpProtocol("tcp").
-				SetFromPort(22).
-				SetToPort(22).
-				SetIpRanges([]*ec2.IpRange{
-					(&ec2.IpRange{}).
-						SetCidrIp("0.0.0.0/0"),
-				}),
-		},
-	})
+	_, err = svc.AuthorizeSecurityGroupIngress(authorizeInp)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to set security group %s ingress, %v", name, err)
 	}
