@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/bramvdbogaerde/go-scp"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -314,8 +315,28 @@ func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
 	return client, err
 }
 
-func copyFile(client *ssh.Client, file string) error {
-	fileInfo, err := os.Stat(file)
+func newSCPClient(region, publicIPAddress string) (*scp.Client, error) {
+	signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
+	if err != nil {
+		return nil, err
+	}
+
+	client := scp.NewClient(fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
+		User:            "arch",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	})
+
+	err = client.Connect()
+	if err != nil {
+		return nil, err
+	}
+
+	return &client, err
+}
+
+func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) error {
+	fileInfo, err := os.Stat(filename)
 	if err != nil {
 		return err
 	}
@@ -336,7 +357,16 @@ func copyFile(client *ssh.Client, file string) error {
 			},
 		)
 	} else {
-		// copy file here
+		fmt.Println("---")
+		file, err := os.Open(filename)
+		if err != nil {
+			return err
+		}
+
+		err = scpClient.CopyFromFile(*file, file.Name(), "0644")
+		if err != nil {
+		 	return err
+		}
 	}
 
 	return nil
@@ -381,18 +411,23 @@ func runCmd(client *ssh.Client, runCmd string) error {
 }
 
 func exec(region, publicIPAddress, file string) error {
-	client, err := newSSHClient(region, publicIPAddress)
+	sshClient, err := newSSHClient(region, publicIPAddress)
 	if err != nil {
 		return err
 	}
 
-	err = copyFile(client, file)
+	scpClient, err := newSCPClient(region, publicIPAddress)
 	if err != nil {
 		return err
 	}
 
-	return runCmd(client, "echo 'testing' && sleep 3 && echo 'test'")
-	// return runCmd(client, fmt.Sprintf("run %s", file))
+	err = copyFile(sshClient, scpClient, file)
+	if err != nil {
+		return err
+	}
+
+	return runCmd(sshClient, fmt.Sprintf("cat %s", file))
+	// return runCmd(sshclient, fmt.Sprintf("run %s", file))
 }
 
 func run(cmd *cobra.Command, args []string) {
