@@ -3,7 +3,10 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -12,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 )
 
 var (
@@ -41,34 +45,60 @@ var (
 	ipPermissions = []*ec2.IpPermission{
 		(&ec2.IpPermission{}).
 			SetIpProtocol("tcp").
-			SetFromPort(80).
-			SetToPort(80).
-			SetIpRanges([]*ec2.IpRange{
-				{CidrIp: aws.String("0.0.0.0/0")},
-			}),
-		(&ec2.IpPermission{}).
-			SetIpProtocol("tcp").
 			SetFromPort(22).
 			SetToPort(22).
-			SetIpRanges([]*ec2.IpRange{
-				(&ec2.IpRange{}).
-					SetCidrIp("0.0.0.0/0"),
-			}),
+			SetIpRanges([]*ec2.IpRange{(&ec2.IpRange{}).SetCidrIp("0.0.0.0/0")}),
 	}
 
 	rootCmd = &cobra.Command{
 		Use:   name,
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
-		Run: func(cmd *cobra.Command, args []string) {
-			region, _ := cmd.Flags().GetString("region")
-			spot, _ := cmd.Flags().GetBool("spot")
-			instanceType, _ := cmd.Flags().GetString("instance")
-			volume, _ := cmd.Flags().GetInt64("volume")
-			instance, err := runInstance(spot, instanceType, region, volume)
-			fmt.Println(instance, err)
-		},
+		Args:  cobra.ExactArgs(1),
+		Run:   run,
 	}
 )
+
+func init() {
+	rootCmd.Flags().IntP("duration", "d", 10, "duration time of ec2 instance (minutes)")
+	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
+	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
+	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
+	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
+}
+
+func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
+	fmt.Printf("--- atexit triggered, terminating instances in %d minutes ---", duration)
+	time.Sleep(time.Duration(duration) * time.Minute)
+	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, error) {
+	duration, err := cmd.Flags().GetInt("duration")
+	if err != nil {
+		return 0, "", "", false, 0, err
+	}
+	instanceType, err := cmd.Flags().GetString("instance")
+	if err != nil {
+		return 0, "", "", false, 0, err
+	}
+	region, err := cmd.Flags().GetString("region")
+	if err != nil {
+		return 0, "", "", false, 0, err
+	}
+	spot, err := cmd.Flags().GetBool("spot")
+	if err != nil {
+		return 0, "", "", false, 0, err
+	}
+	volume, err := cmd.Flags().GetInt64("volume")
+	if err != nil {
+		return 0, "", "", false, 0, err
+	}
+
+	return duration, instanceType, region, spot, volume, nil
+}
 
 func newEC2Client(region string) (*ec2.EC2, error) {
 	sess, err := session.NewSession(&aws.Config{
@@ -92,12 +122,7 @@ func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.Bl
 
 	return []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
 		DeviceName: describeRes.Images[0].RootDeviceName,
-		Ebs: &ec2.EbsBlockDevice{
-			DeleteOnTermination: aws.Bool(true),
-			Encrypted:           aws.Bool(false),
-			VolumeSize:          aws.Int64(volume),
-			VolumeType:          aws.String("gp2"),
-		},
+		Ebs:        &ec2.EbsBlockDevice{VolumeSize: aws.Int64(volume)},
 	}}, nil
 }
 
@@ -182,7 +207,9 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	}
 
 	describeRes, err := svc.DescribeSpotInstanceRequests(spotInstanceRequest)
-	for err != nil || len(describeRes.SpotInstanceRequests) == 0 || describeRes.SpotInstanceRequests[0].InstanceId == nil {
+	for err != nil ||
+		len(describeRes.SpotInstanceRequests) == 0 ||
+		describeRes.SpotInstanceRequests[0].InstanceId == nil {
 		describeRes, err = svc.DescribeSpotInstanceRequests(spotInstanceRequest)
 		time.Sleep(time.Second)
 	}
@@ -190,13 +217,8 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
 }
 
-func runInstance(spot bool, instanceType, region string, volume int64) (*ec2.Instance, error) {
+func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume int64) (*ec2.Instance, error) {
 	imageID := regionImageIDMap[region]
-	svc, err := newEC2Client(region)
-	if err != nil {
-		return nil, fmt.Errorf("Could not create EC2 client, %v", err)
-	}
-
 	blockDeviceMappings, err := getBlockDeviceMapping(svc, region, volume)
 	if err != nil {
 		return nil, fmt.Errorf("Could not get block device mappings, %v", err)
@@ -255,14 +277,151 @@ func runInstance(spot bool, instanceType, region string, volume int64) (*ec2.Ins
 	return describeInstancesRes.Reservations[0].Instances[0], nil
 }
 
+func pemFileToSigner(pemFile string) (ssh.Signer, error) {
+	pemBytes, err := ioutil.ReadFile(pemFile)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := ssh.ParsePrivateKey(pemBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return signer, nil
+}
+
+func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
+	signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
+		User:            "arch",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	})
+	for err != nil {
+		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
+			User:            "arch",
+			Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		})
+		time.Sleep(time.Second)
+	}
+
+	return client, err
+}
+
+func copyFile(client *ssh.Client, file string) error {
+	fileInfo, err := os.Stat(file)
+	if err != nil {
+		return err
+	}
+
+	if fileInfo.IsDir() {
+		return filepath.Walk(
+			name,
+			func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.IsDir() {
+					return nil
+				}
+
+				// copy file here
+				return nil
+			},
+		)
+	} else {
+		// copy file here
+	}
+
+	return nil
+}
+
+func runCmd(client *ssh.Client, runCmd string) error {
+	sess, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+
+	stdoutPipe, err := sess.StdoutPipe()
+	if err != nil {
+		return err
+	}
+
+	stderrPipe, err := sess.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	sess.Start(runCmd)
+	quit := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-quit:
+				return
+			default:
+				io.Copy(os.Stdout, stdoutPipe)
+				io.Copy(os.Stderr, stderrPipe)
+			}
+		}
+	}()
+
+	sess.Wait()
+	quit <- true
+
+	io.Copy(os.Stdout, stdoutPipe)
+	io.Copy(os.Stderr, stderrPipe)
+	return nil
+}
+
+func exec(region, publicIPAddress, file string) error {
+	client, err := newSSHClient(region, publicIPAddress)
+	if err != nil {
+		return err
+	}
+
+	err = copyFile(client, file)
+	if err != nil {
+		return err
+	}
+
+	return runCmd(client, "echo 'testing' && sleep 3 && echo 'test'")
+	// return runCmd(client, fmt.Sprintf("run %s", file))
+}
+
+func run(cmd *cobra.Command, args []string) {
+	duration, instanceType, region, spot, volume, err := getFlags(cmd)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	svc, err := newEC2Client(region)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	instance, err := runInstance(svc, spot, instanceType, region, volume)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	defer atexit(svc, duration, instance)
+	if err := exec(region, aws.StringValue(instance.PublicIpAddress), args[0]); err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
 // Execute executes the root command.
 func Execute() error {
 	return rootCmd.Execute()
-}
-
-func init() {
-	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
-	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
-	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
-	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
 }
