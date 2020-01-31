@@ -59,7 +59,7 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().IntP("duration", "d", 10, "duration time of ec2 instance (minutes)")
+	rootCmd.Flags().IntP("duration", "d", 600, "duration time of ec2 instance (seconds)")
 	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
@@ -67,8 +67,8 @@ func init() {
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
-	fmt.Printf("--- atexit triggered, terminating instances in %d minutes ---", duration)
-	time.Sleep(time.Duration(duration) * time.Minute)
+	fmt.Printf("--- atexit triggered, terminating instances in %d seconds ---", duration)
+	time.Sleep(time.Duration(duration) * time.Second)
 	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 	if err != nil {
 		panic(err)
