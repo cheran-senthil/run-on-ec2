@@ -371,8 +371,11 @@ func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) err
 						return err
 					}
 
-					defer file.Close()
 					if err := scpClient.CopyFromFile(*file, "~", "0644"); err != nil {
+						return err
+					}
+
+					if err := file.Close(); err != nil {
 						return err
 					}
 				}
@@ -387,12 +390,11 @@ func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) err
 		return err
 	}
 
-	defer file.Close()
 	if err := scpClient.CopyFromFile(*file, file.Name(), "0644"); err != nil {
 		return err
 	}
 
-	return nil
+	return file.Close()
 }
 
 func runCmd(client *ssh.Client, runCmd string) error {
