@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/aws/aws-sdk-go v1.28.9
+	github.com/bramvdbogaerde/go-scp v0.0.0-20200119201711-987556b8bdd7
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/spf13/cobra v0.0.5
 	github.com/stretchr/testify v1.4.0 // indirect

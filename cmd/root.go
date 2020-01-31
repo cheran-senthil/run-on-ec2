@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
+	"path/filepath"
 	"os"
 	"time"
 
@@ -65,7 +65,7 @@ var (
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			_, err := os.Stat(args[0])
+			runFile, err := os.Stat(args[0])
 			if err != nil {
 				panic(err)
 			}
@@ -84,16 +84,39 @@ var (
 			if err != nil {
 			}
 
+			time.Sleep(time.Minute)
+
 			client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", aws.StringValue(instance.PublicIpAddress)), &ssh.ClientConfig{
 				User: "arch",
 				Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-				HostKeyCallback: ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-					return nil
-				}),
+				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 			})
+
 			if err != nil {
 				fmt.Println(err.Error())
 				return
+			}
+
+			if runFile.IsDir() {
+				err = filepath.Walk(
+					args[0],
+					func(path string, info os.FileInfo, err error) error {
+						if err != nil {
+							return err
+						}
+						if info.IsDir() {
+							return nil
+						}
+
+						// copy file here
+
+						return nil
+					},
+				)
+
+				if err != nil {
+				}
+			} else {
 			}
 
 			s, err := client.NewSession()
