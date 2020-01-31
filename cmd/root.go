@@ -59,15 +59,16 @@ var (
 )
 
 func init() {
+	rootCmd.Flags().IntP("duration", "d", 10, "duration time of ec2 instance (minutes)")
+	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
-	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
 }
 
-func atexit(svc *ec2.EC2, instanceIds []*string) error {
-	fmt.Println("--- atexit ---")
-	time.Sleep(5 * time.Minute)
+func atexit(svc *ec2.EC2, duration int, instanceIds []*string) error {
+	fmt.Printf("--- atexit triggered, terminating instances in %d minutes ---", duration)
+	time.Sleep(time.Duration(duration) * time.Minute)
 	input := &ec2.TerminateInstancesInput{
 		InstanceIds: instanceIds,
 		DryRun:      aws.Bool(false),
@@ -81,25 +82,29 @@ func atexit(svc *ec2.EC2, instanceIds []*string) error {
 	return nil
 }
 
-func getFlags(cmd *cobra.Command) (string, bool, string, int64, error) {
-	region, err := cmd.Flags().GetString("region")
+func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, error) {
+	duration, err := cmd.Flags().GetInt("duration")
 	if err != nil {
-		return "", false, "", 0, err
-	}
-	spot, err := cmd.Flags().GetBool("spot")
-	if err != nil {
-		return "", false, "", 0, err
+		return 0, "", "", false, 0, err
 	}
 	instanceType, err := cmd.Flags().GetString("instance")
 	if err != nil {
-		return "", false, "", 0, err
+		return 0, "", "", false, 0, err
+	}
+	region, err := cmd.Flags().GetString("region")
+	if err != nil {
+		return 0, "", "", false, 0, err
+	}
+	spot, err := cmd.Flags().GetBool("spot")
+	if err != nil {
+		return 0, "", "", false, 0, err
 	}
 	volume, err := cmd.Flags().GetInt64("volume")
 	if err != nil {
-		return "", false, "", 0, err
+		return 0, "", "", false, 0, err
 	}
 
-	return region, spot, instanceType, volume, nil
+	return duration, instanceType, region, spot, volume, nil
 }
 
 func newEC2Client(region string) (*ec2.EC2, error) {
@@ -401,7 +406,7 @@ func exec(region, publicIPAddress, file string) error {
 }
 
 func run(cmd *cobra.Command, args []string) {
-	region, spot, instanceType, volume, err := getFlags(cmd)
+	duration, instanceType, region, spot, volume, err := getFlags(cmd)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -410,7 +415,7 @@ func run(cmd *cobra.Command, args []string) {
 	svc, err := newEC2Client(region)
 	instance, err := runInstance(svc, spot, instanceType, region, volume)
 	instanceIds := []*string{instance.InstanceId}
-	defer atexit(svc, instanceIds)
+	defer atexit(svc, duration, instanceIds)
 	if err := exec(region, aws.StringValue(instance.PublicIpAddress), args[0]); err != nil {
 		fmt.Println(err)
 		return
