@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/bramvdbogaerde/go-scp"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -68,11 +69,11 @@ func init() {
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
-	fmt.Printf("--- atexit triggered, terminating instances in %d seconds ---", duration)
+	logrus.Info("atexit triggered")
 	time.Sleep(time.Duration(duration) * time.Second)
 	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 	if err != nil {
-		panic(err)
+		logrus.WithError(err).Fatal()
 	}
 }
 
@@ -110,6 +111,7 @@ func newEC2Client(region string) (*ec2.EC2, error) {
 		return nil, err
 	}
 
+	logrus.Debug("new AWS session initialized")
 	return ec2.New(sess), nil
 }
 
@@ -211,6 +213,7 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	for err != nil ||
 		len(describeRes.SpotInstanceRequests) == 0 ||
 		describeRes.SpotInstanceRequests[0].InstanceId == nil {
+		logrus.WithError(err).Debug("failed to describe spot instance")
 		describeRes, err = svc.DescribeSpotInstanceRequests(spotInstanceRequest)
 		time.Sleep(time.Second)
 	}
@@ -355,13 +358,11 @@ func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) err
 						return err
 					}
 
-					err = sess.Run(fmt.Sprintf("mkdir %s", path[len(filename):]))
-					if err != nil {
+					if err := sess.Run(fmt.Sprintf("mkdir %s", path)); err != nil {
 						return err
 					}
 
-					err = sess.Close()
-					if err != nil {
+					if err := sess.Close(); err != nil {
 						return err
 					}
 				} else {
@@ -369,8 +370,9 @@ func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) err
 					if err != nil {
 						return err
 					}
-					err = scpClient.CopyFromFile(*file, path[len(filename):], "0644")
-					if err != nil {
+
+					defer file.Close()
+					if err := scpClient.CopyFromFile(*file, "~", "0644"); err != nil {
 						return err
 					}
 				}
@@ -378,16 +380,16 @@ func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) err
 				return nil
 			},
 		)
-	} else {
-		file, err := os.Open(filename)
-		if err != nil {
-			return err
-		}
+	}
 
-		err = scpClient.CopyFromFile(*file, file.Name(), "0644")
-		if err != nil {
-		 	return err
-		}
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+
+	defer file.Close()
+	if err := scpClient.CopyFromFile(*file, file.Name(), "0644"); err != nil {
+		return err
 	}
 
 	return nil
@@ -431,7 +433,7 @@ func runCmd(client *ssh.Client, runCmd string) error {
 	return nil
 }
 
-func exec(region, publicIPAddress, file string) error {
+func exec(region, publicIPAddress, filename string) error {
 	sshClient, err := newSSHClient(region, publicIPAddress)
 	if err != nil {
 		return err
@@ -442,39 +444,52 @@ func exec(region, publicIPAddress, file string) error {
 		return err
 	}
 
-	err = copyFile(sshClient, scpClient, file)
+	err = copyFile(sshClient, scpClient, filename)
 	if err != nil {
 		return err
 	}
 
-	return runCmd(sshClient, fmt.Sprintf("ls -l %s", file))
+	logrus.Debug("successfully copied file")
+	return runCmd(sshClient, fmt.Sprintf("ls -l %s", filename))
 	// return runCmd(sshclient, fmt.Sprintf("run %s", file))
 }
 
 func run(cmd *cobra.Command, args []string) {
 	duration, instanceType, region, spot, volume, err := getFlags(cmd)
 	if err != nil {
-		fmt.Println(err)
+		logrus.WithError(err).Error()
 		return
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"duration":     duration,
+		"instanceType": instanceType,
+		"region":       region,
+		"spot":         spot,
+		"volume":       volume,
+	}).Info()
 
 	svc, err := newEC2Client(region)
 	if err != nil {
-		fmt.Println(err)
+		logrus.WithError(err).Error()
 		return
 	}
 
+	logrus.Info("new EC2 client initialized")
 	instance, err := runInstance(svc, spot, instanceType, region, volume)
 	if err != nil {
-		fmt.Println(err)
+		logrus.WithError(err).Error()
 		return
 	}
 
 	defer atexit(svc, duration, instance)
+	logrus.Info("new instance running")
 	if err := exec(region, aws.StringValue(instance.PublicIpAddress), args[0]); err != nil {
-		fmt.Println(err)
+		logrus.WithError(err).Error()
 		return
 	}
+
+	logrus.Info("successful execution")
 }
 
 // Execute executes the root command.
