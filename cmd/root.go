@@ -102,20 +102,6 @@ func getFlags(cmd *cobra.Command) (string, bool, string, int64, error) {
 	return region, spot, instanceType, volume, nil
 }
 
-func pemFileToSigner(pemFile string) (ssh.Signer, error) {
-	pemBytes, err := ioutil.ReadFile(pemFile)
-	if err != nil {
-		return nil, err
-	}
-
-	signer, err := ssh.ParsePrivateKey(pemBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return signer, nil
-}
-
 func newEC2Client(region string) (*ec2.EC2, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String(region),
@@ -296,7 +282,21 @@ func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume in
 	return describeInstancesRes.Reservations[0].Instances[0], nil
 }
 
-func getClient(region, publicIPAddress string) (*ssh.Client, error) {
+func pemFileToSigner(pemFile string) (ssh.Signer, error) {
+	pemBytes, err := ioutil.ReadFile(pemFile)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := ssh.ParsePrivateKey(pemBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return signer, nil
+}
+
+func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
 	signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
 	if err != nil {
 		return nil, err
@@ -319,28 +319,15 @@ func getClient(region, publicIPAddress string) (*ssh.Client, error) {
 	return client, err
 }
 
-func run(cmd *cobra.Command, args []string) {
-	runFile, err := os.Stat(args[0])
+func copyFile(client *ssh.Client, file string) error {
+	fileInfo, err := os.Stat(file)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 
-	region, spot, instanceType, volume, err := getFlags(cmd)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	svc, err := newEC2Client(region)
-	instance, err := runInstance(svc, spot, instanceType, region, volume)
-	instanceIds := []*string{instance.InstanceId}
-	defer atexit(svc, instanceIds)
-
-	client, err := getClient(region, aws.StringValue(instance.PublicIpAddress))
-	if runFile.IsDir() {
-		err = filepath.Walk(
-			args[0],
+	if fileInfo.IsDir() {
+		return filepath.Walk(
+			name,
 			func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
@@ -354,31 +341,29 @@ func run(cmd *cobra.Command, args []string) {
 				return nil
 			},
 		)
-
-		if err != nil {
-		}
 	} else {
 	}
 
-	s, err := client.NewSession()
+	return nil
+}
+
+func runCmd(client *ssh.Client, runCmd string) error {
+	sess, err := client.NewSession()
 	if err != nil {
-		fmt.Println(err.Error())
-		return
+		return err
 	}
 
-	stdoutPipe, err := s.StdoutPipe()
+	stdoutPipe, err := sess.StdoutPipe()
 	if err != nil {
-		fmt.Println(err.Error())
-		return
+		return err
 	}
 
-	stderrPipe, err := s.StderrPipe()
+	stderrPipe, err := sess.StderrPipe()
 	if err != nil {
-		fmt.Println(err.Error())
-		return
+		return err
 	}
 
-	s.Start("echo 'tesing' && sleep 3 && echo 'test'")
+	sess.Start(runCmd)
 	quit := make(chan bool)
 	go func() {
 		for {
@@ -392,11 +377,44 @@ func run(cmd *cobra.Command, args []string) {
 		}
 	}()
 
-	s.Wait()
+	sess.Wait()
 	quit <- true
 
 	io.Copy(os.Stdout, stdoutPipe)
 	io.Copy(os.Stderr, stderrPipe)
+	return nil
+}
+
+func exec(region, publicIPAddress, file string) error {
+	client, err := newSSHClient(region, publicIPAddress)
+	if err != nil {
+		return err
+	}
+
+	err = copyFile(client, file)
+	if err != nil {
+		return err
+	}
+
+	return runCmd(client, "echo 'testing' && sleep 3 && echo 'test'")
+	// return runCmd(client, fmt.Sprintf("run %s", file))
+}
+
+func run(cmd *cobra.Command, args []string) {
+	region, spot, instanceType, volume, err := getFlags(cmd)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	svc, err := newEC2Client(region)
+	instance, err := runInstance(svc, spot, instanceType, region, volume)
+	instanceIds := []*string{instance.InstanceId}
+	defer atexit(svc, instanceIds)
+	if err := exec(region, aws.StringValue(instance.PublicIpAddress), args[0]); err != nil {
+		fmt.Println(err)
+		return
+	}
 }
 
 // Execute executes the root command.
