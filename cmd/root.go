@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/prometheus/common/log"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -55,105 +54,32 @@ var (
 		Use:   name,
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
 		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			runFile, err := os.Stat(args[0])
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-
-			region, spot, instanceType, volume, err := getFlags(cmd)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-
-			svc, err := newEC2Client(region)
-			instance, err := runInstance(svc, spot, instanceType, region, volume)
-			instanceIds := []*string{instance.InstanceId}
-			defer atexit(svc, instanceIds)
-
-			signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-
-			time.Sleep(time.Minute)
-
-			client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", aws.StringValue(instance.PublicIpAddress)), &ssh.ClientConfig{
-				User: "arch",
-				Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-			})
-
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-
-			if runFile.IsDir() {
-				err = filepath.Walk(
-					args[0],
-					func(path string, info os.FileInfo, err error) error {
-						if err != nil {
-							return err
-						}
-						if info.IsDir() {
-							return nil
-						}
-
-						// copy file here
-
-						return nil
-					},
-				)
-
-				if err != nil {
-				}
-			} else {
-			}
-
-			s, err := client.NewSession()
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-
-			stdoutPipe, err := s.StdoutPipe()
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-
-			stderrPipe, err := s.StderrPipe()
-			if err != nil {
-				fmt.Println(err.Error())
-				return
-			}
-
-			s.Start("echo 'tesing' && sleep 3 && echo 'test'")
-			quit := make(chan bool)
-			go func() {
-				for {
-					select {
-					case <-quit:
-						return
-					default:
-						io.Copy(os.Stdout, stdoutPipe)
-						io.Copy(os.Stderr, stderrPipe)
-					}
-				}
-			}()
-
-			s.Wait()
-			quit <- true
-
-			io.Copy(os.Stdout, stdoutPipe)
-			io.Copy(os.Stderr, stderrPipe)
-		},
+		Run:   run,
 	}
 )
+
+func init() {
+	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
+	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
+	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
+	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
+}
+
+func atexit(svc *ec2.EC2, instanceIds []*string) error {
+	fmt.Println("--- atexit ---")
+	time.Sleep(5 * time.Minute)
+	input := &ec2.TerminateInstancesInput{
+		InstanceIds: instanceIds,
+		DryRun:      aws.Bool(false),
+	}
+
+	_, err := svc.TerminateInstances(input)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 func getFlags(cmd *cobra.Command) (string, bool, string, int64, error) {
 	region, err := cmd.Flags().GetString("region")
@@ -174,22 +100,6 @@ func getFlags(cmd *cobra.Command) (string, bool, string, int64, error) {
 	}
 
 	return region, spot, instanceType, volume, nil
-}
-
-func atexit(svc *ec2.EC2, instanceIds []*string) error {
-	fmt.Println("--- atexit ---")
-	time.Sleep(5 * time.Minute)
-	input := &ec2.TerminateInstancesInput{
-		InstanceIds: instanceIds,
-		DryRun:      aws.Bool(false),
-	}
-
-	_, err := svc.TerminateInstances(input)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func pemFileToSigner(pemFile string) (ssh.Signer, error) {
@@ -386,14 +296,110 @@ func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume in
 	return describeInstancesRes.Reservations[0].Instances[0], nil
 }
 
+func getClient(region, publicIPAddress string) (*ssh.Client, error) {
+	signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
+		User:            "arch",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	})
+	for err != nil {
+		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
+			User:            "arch",
+			Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		})
+		time.Sleep(time.Second)
+	}
+
+	return client, err
+}
+
+func run(cmd *cobra.Command, args []string) {
+	runFile, err := os.Stat(args[0])
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	region, spot, instanceType, volume, err := getFlags(cmd)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	svc, err := newEC2Client(region)
+	instance, err := runInstance(svc, spot, instanceType, region, volume)
+	instanceIds := []*string{instance.InstanceId}
+	defer atexit(svc, instanceIds)
+
+	client, err := getClient(region, aws.StringValue(instance.PublicIpAddress))
+	if runFile.IsDir() {
+		err = filepath.Walk(
+			args[0],
+			func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.IsDir() {
+					return nil
+				}
+
+				// copy file here
+
+				return nil
+			},
+		)
+
+		if err != nil {
+		}
+	} else {
+	}
+
+	s, err := client.NewSession()
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	stdoutPipe, err := s.StdoutPipe()
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	stderrPipe, err := s.StderrPipe()
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
+
+	s.Start("echo 'tesing' && sleep 3 && echo 'test'")
+	quit := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-quit:
+				return
+			default:
+				io.Copy(os.Stdout, stdoutPipe)
+				io.Copy(os.Stderr, stderrPipe)
+			}
+		}
+	}()
+
+	s.Wait()
+	quit <- true
+
+	io.Copy(os.Stdout, stdoutPipe)
+	io.Copy(os.Stderr, stderrPipe)
+}
+
 // Execute executes the root command.
 func Execute() error {
 	return rootCmd.Execute()
-}
-
-func init() {
-	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
-	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
-	rootCmd.Flags().StringP("instance", "t", "t2.micro", "ec2 instance type")
-	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
 }
