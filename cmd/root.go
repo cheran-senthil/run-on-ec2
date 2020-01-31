@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/prometheus/common/log"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -45,19 +46,9 @@ var (
 	ipPermissions = []*ec2.IpPermission{
 		(&ec2.IpPermission{}).
 			SetIpProtocol("tcp").
-			SetFromPort(80).
-			SetToPort(80).
-			SetIpRanges([]*ec2.IpRange{
-				{CidrIp: aws.String("0.0.0.0/0")},
-			}),
-		(&ec2.IpPermission{}).
-			SetIpProtocol("tcp").
 			SetFromPort(22).
 			SetToPort(22).
-			SetIpRanges([]*ec2.IpRange{
-				(&ec2.IpRange{}).
-					SetCidrIp("0.0.0.0/0"),
-			}),
+			SetIpRanges([]*ec2.IpRange{(&ec2.IpRange{}).SetCidrIp("0.0.0.0/0")}),
 	}
 
 	rootCmd = &cobra.Command{
@@ -67,13 +58,15 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			runFile, err := os.Stat(args[0])
 			if err != nil {
-				panic(err)
+				fmt.Println(err)
+				return
 			}
 
-			region, _ := cmd.Flags().GetString("region")
-			spot, _ := cmd.Flags().GetBool("spot")
-			instanceType, _ := cmd.Flags().GetString("instance")
-			volume, _ := cmd.Flags().GetInt64("volume")
+			region, spot, instanceType, volume, err := getFlags(cmd)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
 
 			svc, err := newEC2Client(region)
 			instance, err := runInstance(svc, spot, instanceType, region, volume)
@@ -82,6 +75,8 @@ var (
 
 			signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
 			if err != nil {
+				fmt.Println(err)
+				return
 			}
 
 			time.Sleep(time.Minute)
@@ -159,6 +154,27 @@ var (
 		},
 	}
 )
+
+func getFlags(cmd *cobra.Command) (string, bool, string, int64, error) {
+	region, err := cmd.Flags().GetString("region")
+	if err != nil {
+		return "", false, "", 0, err
+	}
+	spot, err := cmd.Flags().GetBool("spot")
+	if err != nil {
+		return "", false, "", 0, err
+	}
+	instanceType, err := cmd.Flags().GetString("instance")
+	if err != nil {
+		return "", false, "", 0, err
+	}
+	volume, err := cmd.Flags().GetInt64("volume")
+	if err != nil {
+		return "", false, "", 0, err
+	}
+
+	return region, spot, instanceType, volume, nil
+}
 
 func atexit(svc *ec2.EC2, instanceIds []*string) error {
 	fmt.Println("--- atexit ---")
