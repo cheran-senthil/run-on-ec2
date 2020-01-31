@@ -343,21 +343,42 @@ func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) err
 
 	if fileInfo.IsDir() {
 		return filepath.Walk(
-			name,
+			filename,
 			func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
+
 				if info.IsDir() {
-					return nil
+					sess, err := sshClient.NewSession()
+					if err != nil {
+						return err
+					}
+
+					err = sess.Run(fmt.Sprintf("mkdir %s", path[len(filename):]))
+					if err != nil {
+						return err
+					}
+
+					err = sess.Close()
+					if err != nil {
+						return err
+					}
+				} else {
+					file, err := os.Open(path)
+					if err != nil {
+						return err
+					}
+					err = scpClient.CopyFromFile(*file, path[len(filename):], "0644")
+					if err != nil {
+						return err
+					}
 				}
 
-				// copy file here
 				return nil
 			},
 		)
 	} else {
-		fmt.Println("---")
 		file, err := os.Open(filename)
 		if err != nil {
 			return err
@@ -426,7 +447,7 @@ func exec(region, publicIPAddress, file string) error {
 		return err
 	}
 
-	return runCmd(sshClient, fmt.Sprintf("cat %s", file))
+	return runCmd(sshClient, fmt.Sprintf("ls -l %s", file))
 	// return runCmd(sshclient, fmt.Sprintf("run %s", file))
 }
 
