@@ -66,20 +66,13 @@ func init() {
 	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
 }
 
-func atexit(svc *ec2.EC2, duration int, instanceIds []*string) error {
+func atexit(svc *ec2.EC2, duration int, instanceIds []*string) {
 	fmt.Printf("--- atexit triggered, terminating instances in %d minutes ---", duration)
 	time.Sleep(time.Duration(duration) * time.Minute)
-	input := &ec2.TerminateInstancesInput{
-		InstanceIds: instanceIds,
-		DryRun:      aws.Bool(false),
-	}
-
-	_, err := svc.TerminateInstances(input)
+	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: instanceIds})
 	if err != nil {
-		return err
+		panic(err)
 	}
-
-	return nil
 }
 
 func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, error) {
@@ -219,7 +212,9 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	}
 
 	describeRes, err := svc.DescribeSpotInstanceRequests(spotInstanceRequest)
-	for err != nil || len(describeRes.SpotInstanceRequests) == 0 || describeRes.SpotInstanceRequests[0].InstanceId == nil {
+	for err != nil ||
+		len(describeRes.SpotInstanceRequests) == 0 ||
+		describeRes.SpotInstanceRequests[0].InstanceId == nil {
 		describeRes, err = svc.DescribeSpotInstanceRequests(spotInstanceRequest)
 		time.Sleep(time.Second)
 	}
