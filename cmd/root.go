@@ -337,11 +337,11 @@ func copyFile(client *ssh.Client, file string) error {
 				}
 
 				// copy file here
-
 				return nil
 			},
 		)
 	} else {
+		// copy file here
 	}
 
 	return nil
