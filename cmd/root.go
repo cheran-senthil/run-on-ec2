@@ -111,6 +111,23 @@ var (
 			volume, _ := cmd.Flags().GetInt64("volume")
 			instance, err := runInstance(spot, instanceType, region, volume)
 
+			defer func() {
+				fmt.Println("--- Execution Over ---")
+				time.Sleep(5 * time.Minute)
+				input := &ec2.TerminateInstancesInput{
+					InstanceIds: []*string{instance.InstanceId},
+					DryRun: aws.Bool(false),
+				}
+				svc, err := newEC2Client(region)
+				if err != nil {
+					panic(err)
+				}
+				_, err = svc.TerminateInstances(input)
+				if err != nil {
+					panic(err)
+				}
+			}()
+
 			time.Sleep(60 * time.Second)
 
 			pemFile := fmt.Sprintf("%s-%s.pem", name, region)
@@ -149,6 +166,11 @@ var (
 				fmt.Println(err.Error())
 				return
 			}
+			stderrPipe, err := sess.StderrPipe()
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
 
 			sess.Start(runCmd)
 
@@ -160,6 +182,7 @@ var (
 						return
 					default:
 						io.Copy(os.Stdout, stdoutPipe)
+						io.Copy(os.Stderr, stderrPipe)
 					}
 				}
 			}()
@@ -168,6 +191,7 @@ var (
 			quit <- true
 
 			io.Copy(os.Stdout, stdoutPipe)
+			io.Copy(os.Stderr, stderrPipe)
 		},
 	}
 )
