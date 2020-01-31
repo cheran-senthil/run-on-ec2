@@ -70,11 +70,8 @@ func init() {
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
 	logrus.Info("atexit triggered")
+	defer svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 	time.Sleep(time.Duration(duration) * time.Second)
-	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
-	if err != nil {
-		logrus.WithError(err).Fatal()
-	}
 }
 
 func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, error) {
@@ -371,7 +368,7 @@ func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) err
 						return err
 					}
 
-					if err := scpClient.CopyFromFile(*file, "~", "0644"); err != nil {
+					if err := scpClient.CopyFromFile(*file, file.Name(), "0644"); err != nil {
 						return err
 					}
 
@@ -440,11 +437,13 @@ func exec(region, publicIPAddress, filename string) error {
 	if err != nil {
 		return err
 	}
+	defer sshClient.Close()
 
 	scpClient, err := newSCPClient(region, publicIPAddress)
 	if err != nil {
 		return err
 	}
+	defer scpClient.Close()
 
 	err = copyFile(sshClient, scpClient, filename)
 	if err != nil {
