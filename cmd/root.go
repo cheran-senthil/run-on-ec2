@@ -66,10 +66,10 @@ func init() {
 	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
 }
 
-func atexit(svc *ec2.EC2, duration int, instanceIds []*string) {
+func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
 	fmt.Printf("--- atexit triggered, terminating instances in %d minutes ---", duration)
 	time.Sleep(time.Duration(duration) * time.Minute)
-	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: instanceIds})
+	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 	if err != nil {
 		panic(err)
 	}
@@ -408,9 +408,18 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	svc, err := newEC2Client(region)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	instance, err := runInstance(svc, spot, instanceType, region, volume)
-	instanceIds := []*string{instance.InstanceId}
-	defer atexit(svc, duration, instanceIds)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	defer atexit(svc, duration, instance)
 	if err := exec(region, aws.StringValue(instance.PublicIpAddress), args[0]); err != nil {
 		fmt.Println(err)
 		return
