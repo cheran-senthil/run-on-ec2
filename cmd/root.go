@@ -122,12 +122,7 @@ func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.Bl
 
 	return []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
 		DeviceName: describeRes.Images[0].RootDeviceName,
-		Ebs: &ec2.EbsBlockDevice{
-			DeleteOnTermination: aws.Bool(true),
-			Encrypted:           aws.Bool(false),
-			VolumeSize:          aws.Int64(volume),
-			VolumeType:          aws.String("gp2"),
-		},
+		Ebs:        &ec2.EbsBlockDevice{VolumeSize: aws.Int64(volume)},
 	}}, nil
 }
 
