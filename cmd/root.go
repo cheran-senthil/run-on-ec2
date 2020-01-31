@@ -72,6 +72,16 @@ var (
 				panic(err)
 			}
 
+			region, _ := cmd.Flags().GetString("region")
+			spot, _ := cmd.Flags().GetBool("spot")
+			instanceType, _ := cmd.Flags().GetString("instance")
+			volume, _ := cmd.Flags().GetInt64("volume")
+
+			svc, err := newEC2Client(region)
+			instance, err := runInstance(svc, spot, instanceType, region, volume)
+			instanceIds := []*string{instance.InstanceId}
+			defer atexit(svc, instanceIds)
+
 			var runCmd string
 			var runFile string
 
@@ -105,29 +115,6 @@ var (
 			// For Testing:
 			runCmd = "echo 'tesing' && sleep 3 && echo 'test'"
 
-			region, _ := cmd.Flags().GetString("region")
-			spot, _ := cmd.Flags().GetBool("spot")
-			instanceType, _ := cmd.Flags().GetString("instance")
-			volume, _ := cmd.Flags().GetInt64("volume")
-			instance, err := runInstance(spot, instanceType, region, volume)
-
-			defer func() {
-				fmt.Println("--- Execution Over ---")
-				time.Sleep(5 * time.Minute)
-				input := &ec2.TerminateInstancesInput{
-					InstanceIds: []*string{instance.InstanceId},
-					DryRun: aws.Bool(false),
-				}
-				svc, err := newEC2Client(region)
-				if err != nil {
-					panic(err)
-				}
-				_, err = svc.TerminateInstances(input)
-				if err != nil {
-					panic(err)
-				}
-			}()
-
 			time.Sleep(60 * time.Second)
 
 			pemFile := fmt.Sprintf("%s-%s.pem", name, region)
@@ -143,7 +130,7 @@ var (
 				return
 			}
 
-			client, err := ssh.Dial("tcp", *instance.PublicIpAddress+":22", &ssh.ClientConfig{
+			client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", aws.StringValue(instance.PublicIpAddress)), &ssh.ClientConfig{
 				User: "arch",
 				Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
 				HostKeyCallback: ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error {
@@ -155,24 +142,24 @@ var (
 				return
 			}
 
-			sess, err := client.NewSession()
 			if err != nil {
 				fmt.Println(err.Error())
 				return
 			}
 
-			stdoutPipe, err := sess.StdoutPipe()
+			s, err := client.NewSession()
+			stdoutPipe, err := s.StdoutPipe()
 			if err != nil {
 				fmt.Println(err.Error())
 				return
 			}
-			stderrPipe, err := sess.StderrPipe()
+			stderrPipe, err := s.StderrPipe()
 			if err != nil {
 				fmt.Println(err.Error())
 				return
 			}
 
-			sess.Start(runCmd)
+			s.Start(runCmd)
 
 			quit := make(chan bool)
 			go func() {
@@ -187,7 +174,7 @@ var (
 				}
 			}()
 
-			sess.Wait()
+			s.Wait()
 			quit <- true
 
 			io.Copy(os.Stdout, stdoutPipe)
@@ -195,6 +182,22 @@ var (
 		},
 	}
 )
+
+func atexit(svc *ec2.EC2, instanceIds []*string) error {
+	fmt.Println("--- atexit ---")
+	time.Sleep(5 * time.Minute)
+	input := &ec2.TerminateInstancesInput{
+		InstanceIds: instanceIds,
+		DryRun:      aws.Bool(false),
+	}
+
+	_, err := svc.TerminateInstances(input)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 func newEC2Client(region string) (*ec2.EC2, error) {
 	sess, err := session.NewSession(&aws.Config{
@@ -316,13 +319,8 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
 }
 
-func runInstance(spot bool, instanceType, region string, volume int64) (*ec2.Instance, error) {
+func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume int64) (*ec2.Instance, error) {
 	imageID := regionImageIDMap[region]
-	svc, err := newEC2Client(region)
-	if err != nil {
-		return nil, fmt.Errorf("Could not create EC2 client, %v", err)
-	}
-
 	blockDeviceMappings, err := getBlockDeviceMapping(svc, region, volume)
 	if err != nil {
 		return nil, fmt.Errorf("Could not get block device mappings, %v", err)
