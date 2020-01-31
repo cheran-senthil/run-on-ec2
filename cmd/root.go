@@ -3,7 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"net"
 	"os"
+	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -12,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 )
 
 var (
@@ -59,13 +65,109 @@ var (
 	rootCmd = &cobra.Command{
 		Use:   name,
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
+		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			file, err := os.Stat(args[0])
+			if err != nil {
+				panic(err)
+			}
+
+			var runCmd string
+			var runFile string
+
+			if file.IsDir() {
+				matches, err := filepath.Glob(args[0] + "/main.*")
+				if err != nil {
+					panic(err)
+				}
+				runCmd = fmt.Sprintf("cd %s && ", file.Name())
+				runFile = matches[0]
+			} else {
+				runCmd = ""
+				runFile = file.Name()
+			}
+
+			switch ext := path.Ext(runFile); ext {
+			case ".py":
+				runCmd += fmt.Sprintf("chmod +x %s && ./%[1]s", runFile)
+			case ".cpp":
+				runCmd += fmt.Sprintf("g++ -o out %s && ./out", runFile)
+			case ".c":
+				runCmd += fmt.Sprintf("gcc -o out %s && ./out", runFile)
+			case ".go":
+				runCmd += fmt.Sprintf("go run %s", runFile)
+			case ".sh":
+				runCmd += fmt.Sprintf("bash %s", runFile)
+			default:
+				runCmd += fmt.Sprintf("chmod +x %s && ./%[1]s", runFile)
+			}
+
+			// For Testing:
+			runCmd = "echo 'tesing' && sleep 3 && echo 'test'"
+
 			region, _ := cmd.Flags().GetString("region")
 			spot, _ := cmd.Flags().GetBool("spot")
 			instanceType, _ := cmd.Flags().GetString("instance")
 			volume, _ := cmd.Flags().GetInt64("volume")
 			instance, err := runInstance(spot, instanceType, region, volume)
-			fmt.Println(instance, err)
+
+			time.Sleep(60 * time.Second)
+
+			pemFile := fmt.Sprintf("%s-%s.pem", name, region)
+			pemBytes, err := ioutil.ReadFile(pemFile)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			signer, err := ssh.ParsePrivateKey(pemBytes)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			client, err := ssh.Dial("tcp", *instance.PublicIpAddress+":22", &ssh.ClientConfig{
+				User: "arch",
+				Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+				HostKeyCallback: ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+					return nil
+				}),
+			})
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			sess, err := client.NewSession()
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			stdoutPipe, err := sess.StdoutPipe()
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
+
+			sess.Start(runCmd)
+
+			quit := make(chan bool)
+			go func() {
+				for {
+					select {
+					case <-quit:
+						return
+					default:
+						io.Copy(os.Stdout, stdoutPipe)
+					}
+				}
+			}()
+
+			sess.Wait()
+			quit <- true
+
+			io.Copy(os.Stdout, stdoutPipe)
 		},
 	}
 )
