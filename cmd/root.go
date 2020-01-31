@@ -80,9 +80,6 @@ var (
 			instanceIds := []*string{instance.InstanceId}
 			defer atexit(svc, instanceIds)
 
-			// For Testing:
-			runCmd := "echo 'tesing' && sleep 3 && echo 'test'"
-
 			signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
 			if err != nil {
 			}
@@ -99,25 +96,25 @@ var (
 				return
 			}
 
+			s, err := client.NewSession()
 			if err != nil {
 				fmt.Println(err.Error())
 				return
 			}
 
-			s, err := client.NewSession()
 			stdoutPipe, err := s.StdoutPipe()
 			if err != nil {
 				fmt.Println(err.Error())
 				return
 			}
+
 			stderrPipe, err := s.StderrPipe()
 			if err != nil {
 				fmt.Println(err.Error())
 				return
 			}
 
-			s.Start(runCmd)
-
+			s.Start("echo 'tesing' && sleep 3 && echo 'test'")
 			quit := make(chan bool)
 			go func() {
 				for {
