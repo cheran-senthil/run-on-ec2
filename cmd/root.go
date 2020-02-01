@@ -285,6 +285,7 @@ func pemFileToSigner(keyPath string) (ssh.Signer, error) {
 		return nil, err
 	}
 
+	log.Debug("parsed permission file")
 	signer, err := ssh.ParsePrivateKey(pemBytes)
 	if err != nil {
 		return nil, err
@@ -299,6 +300,7 @@ func newSSHClient(keyPath, publicIPAddress string) (*ssh.Client, error) {
 		return nil, err
 	}
 
+	log.Debug("got signer")
 	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
 		User:            "arch",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
@@ -387,9 +389,7 @@ func run(cmd *cobra.Command, args []string) {
 	region, _ := cmd.Flags().GetString("region")
 	spot, _ := cmd.Flags().GetBool("spot")
 	volume, _ := cmd.Flags().GetInt64("volume")
-
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	if verbose {
+	if verbose, _ := cmd.Flags().GetBool("verbose"); verbose {
 		log.SetLevel(log.DebugLevel)
 	}
 
