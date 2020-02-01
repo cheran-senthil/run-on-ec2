@@ -406,12 +406,20 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(c, os.Interrupt,
+		syscall.SIGTERM,
+		syscall.SIGINT,
+		syscall.SIGQUIT,
+		syscall.SIGKILL,
+		syscall.SIGHUP,
+	)
+
 	go func() {
 		<-c
 		atexit(svc, duration, instance)
 		os.Exit(1)
 	}()
+	defer atexit(svc, duration, instance)
 
 	log.Info("new instance running, initializing SSH client...")
 	sshClient, err := newSSHClient(keyPath, aws.StringValue(instance.PublicIpAddress))
@@ -434,7 +442,6 @@ func run(cmd *cobra.Command, args []string) {
 
 	log.Info("execution complete, sleeping...")
 	time.Sleep(time.Duration(duration) * time.Minute)
-	atexit(svc, duration, instance)
 }
 
 // Execute executes the root command.
