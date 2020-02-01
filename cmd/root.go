@@ -70,17 +70,6 @@ func init() {
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
-	log.Info("atexit triggered")
-	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		log.Debug("cleaning up")
-		svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
-		os.Exit(1)
-	}()
-
-	time.Sleep(time.Duration(duration) * time.Second)
 	log.Debug("cleaning up")
 	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 }
@@ -328,6 +317,7 @@ func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
 }
 
 func copyFile(sshClient *ssh.Client, filename string) error {
+	log.Debug("copying file")
 	scpClient := scp.NewSCP(sshClient)
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -413,7 +403,14 @@ func run(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	defer atexit(svc, duration, instance)
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		atexit(svc, duration, instance)
+		os.Exit(1)
+	}()
+
 	log.Info("new instance running")
 	sshClient, err := newSSHClient(region, aws.StringValue(instance.PublicIpAddress))
 	if err != nil {
@@ -434,6 +431,8 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	log.Info("execution complete")
+	time.Sleep(time.Duration(duration) * time.Second)
+	atexit(svc, duration, instance)
 }
 
 // Execute executes the root command.
