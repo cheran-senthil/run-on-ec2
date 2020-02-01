@@ -34,13 +34,14 @@ Usage:
   run-on-ec2 filename [flags]
 
 Flags:
-  -d, --duration int      duration time (minutes) of ec2 instance (default 10)
-  -h, --help              help for run-on-ec2
-  -i, --instance string   ec2 instance type (default "t2.micro")
-  -r, --region string     aws session region (default "eu-central-1")
-  -s, --spot              request spot instances (default true)
-  -v, --verbose           verbose logs (default false)
-  -m, --volume int        volume attached in GiB (default 8)
+  -d, --duration int           persistence time in minutes, of ec2 instance after execution (default 10)
+  -h, --help                   help for run-on-ec2
+  -i, --instance-type string   ec2 instance type (default "t2.micro")
+  -k, --key-path string        key path of a valid aws key pair (defaults to creating a new key pair)
+  -r, --region string          aws session region (default "eu-central-1")
+  -s, --spot                   request spot instances (default true)
+  -v, --verbose                verbose logs (default false)
+  -m, --volume int             volume attached in GiB (default 8)
 ```
 
 ## Apache License 2.0

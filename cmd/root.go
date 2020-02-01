@@ -67,7 +67,7 @@ var (
 func init() {
 	rootCmd.Flags().IntP("duration", "d", 10, "persistence time in minutes, of ec2 instance after execution")
 	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
-	rootCmd.Flags().StringP("key-path", "k", "", "key path of a valid aws key pair (defaults to creating a new key pair \"run-on-ec2-region-username\")")
+	rootCmd.Flags().StringP("key-path", "k", "", "key path of a valid aws key pair (defaults to creating a new key pair)")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().BoolP("verbose", "v", false, "verbose logs (default false)")
