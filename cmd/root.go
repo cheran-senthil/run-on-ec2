@@ -6,7 +6,8 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path/filepath"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -14,8 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/bramvdbogaerde/go-scp"
-	"github.com/sirupsen/logrus"
+	"github.com/hnakamur/go-scp"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -69,9 +70,19 @@ func init() {
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
-	logrus.Info("atexit triggered")
-	defer svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
+	log.Info("atexit triggered")
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		log.Debug("cleaning up")
+		svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
+		os.Exit(1)
+	}()
+
 	time.Sleep(time.Duration(duration) * time.Second)
+	log.Debug("cleaning up")
+	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 }
 
 func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, error) {
@@ -108,7 +119,7 @@ func newEC2Client(region string) (*ec2.EC2, error) {
 		return nil, err
 	}
 
-	logrus.Debug("new AWS session initialized")
+	log.Debug("new AWS session initialized")
 	return ec2.New(sess), nil
 }
 
@@ -210,7 +221,7 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	for err != nil ||
 		len(describeRes.SpotInstanceRequests) == 0 ||
 		describeRes.SpotInstanceRequests[0].InstanceId == nil {
-		logrus.WithError(err).Debug("failed to describe spot instance")
+		log.WithError(err).Debug("failed to describe spot instance")
 		describeRes, err = svc.DescribeSpotInstanceRequests(spotInstanceRequest)
 		time.Sleep(time.Second)
 	}
@@ -304,6 +315,7 @@ func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	})
 	for err != nil {
+		log.WithError(err).Debug("failed to initialize SSH client")
 		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
 			User:            "arch",
 			Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
@@ -315,83 +327,18 @@ func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
 	return client, err
 }
 
-func newSCPClient(region, publicIPAddress string) (*scp.Client, error) {
-	signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
-	if err != nil {
-		return nil, err
-	}
-
-	client := scp.NewClient(fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
-		User:            "arch",
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	})
-
-	err = client.Connect()
-	if err != nil {
-		return nil, err
-	}
-
-	return &client, err
-}
-
-func copyFile(sshClient *ssh.Client, scpClient *scp.Client, filename string) error {
+func copyFile(sshClient *ssh.Client, filename string) error {
+	scpClient := scp.NewSCP(sshClient)
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
 		return err
 	}
 
 	if fileInfo.IsDir() {
-		return filepath.Walk(
-			filename,
-			func(path string, info os.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-
-				if info.IsDir() {
-					sess, err := sshClient.NewSession()
-					if err != nil {
-						return err
-					}
-
-					if err := sess.Run(fmt.Sprintf("mkdir %s", path)); err != nil {
-						return err
-					}
-
-					if err := sess.Close(); err != nil {
-						return err
-					}
-				} else {
-					file, err := os.Open(path)
-					if err != nil {
-						return err
-					}
-
-					if err := scpClient.CopyFromFile(*file, file.Name(), "0644"); err != nil {
-						return err
-					}
-
-					if err := file.Close(); err != nil {
-						return err
-					}
-				}
-
-				return nil
-			},
-		)
+		return scpClient.SendDir(filename, filename, nil)
 	}
 
-	file, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-
-	if err := scpClient.CopyFromFile(*file, file.Name(), "0644"); err != nil {
-		return err
-	}
-
-	return file.Close()
+	return scpClient.SendFile(filename, filename)
 }
 
 func runCmd(client *ssh.Client, runCmd string) error {
@@ -400,16 +347,20 @@ func runCmd(client *ssh.Client, runCmd string) error {
 		return err
 	}
 
+	defer sess.Close()
+	log.Debug("new SSH session initialized")
 	stdoutPipe, err := sess.StdoutPipe()
 	if err != nil {
 		return err
 	}
 
+	log.Debug("new stdout pipe initialized")
 	stderrPipe, err := sess.StderrPipe()
 	if err != nil {
 		return err
 	}
 
+	log.Debug("new stderr pipe initialized")
 	sess.Start(runCmd)
 	quit := make(chan bool)
 	go func() {
@@ -432,65 +383,57 @@ func runCmd(client *ssh.Client, runCmd string) error {
 	return nil
 }
 
-func exec(region, publicIPAddress, filename string) error {
-	sshClient, err := newSSHClient(region, publicIPAddress)
-	if err != nil {
-		return err
-	}
-	defer sshClient.Close()
-
-	scpClient, err := newSCPClient(region, publicIPAddress)
-	if err != nil {
-		return err
-	}
-	defer scpClient.Close()
-
-	err = copyFile(sshClient, scpClient, filename)
-	if err != nil {
-		return err
-	}
-
-	logrus.Debug("successfully copied file")
-	return runCmd(sshClient, fmt.Sprintf("ls -l %s", filename))
-	// return runCmd(sshclient, fmt.Sprintf("run %s", file))
-}
-
 func run(cmd *cobra.Command, args []string) {
+	filename := args[0]
 	duration, instanceType, region, spot, volume, err := getFlags(cmd)
 	if err != nil {
-		logrus.WithError(err).Error()
+		log.WithError(err).Error()
 		return
 	}
 
-	logrus.WithFields(logrus.Fields{
+	log.WithFields(log.Fields{
+		"filename":     filename,
 		"duration":     duration,
 		"instanceType": instanceType,
 		"region":       region,
 		"spot":         spot,
 		"volume":       volume,
-	}).Info()
+	}).Info("flags")
 
 	svc, err := newEC2Client(region)
 	if err != nil {
-		logrus.WithError(err).Error()
+		log.WithError(err).Error()
 		return
 	}
 
-	logrus.Info("new EC2 client initialized")
+	log.Info("new EC2 client initialized")
 	instance, err := runInstance(svc, spot, instanceType, region, volume)
 	if err != nil {
-		logrus.WithError(err).Error()
+		log.WithError(err).Error()
 		return
 	}
 
 	defer atexit(svc, duration, instance)
-	logrus.Info("new instance running")
-	if err := exec(region, aws.StringValue(instance.PublicIpAddress), args[0]); err != nil {
-		logrus.WithError(err).Error()
+	log.Info("new instance running")
+	sshClient, err := newSSHClient(region, aws.StringValue(instance.PublicIpAddress))
+	if err != nil {
+		log.WithError(err).Error()
 		return
 	}
 
-	logrus.Info("successful execution")
+	defer sshClient.Close()
+	log.Info("new SSH client initialized")
+	if err = copyFile(sshClient, filename); err != nil {
+		log.WithError(err).Error()
+		return
+	}
+
+	log.Info("copied file")
+	if err := runCmd(sshClient, fmt.Sprintf("ls -l %s", filename)); err != nil {
+		log.WithError(err).Error()
+	}
+
+	log.Info("execution complete")
 }
 
 // Execute executes the root command.
