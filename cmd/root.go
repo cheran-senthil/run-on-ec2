@@ -135,12 +135,14 @@ func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
 		return "", err
 	}
 
+	log.Debug("created pem file")
 	defer pemFile.Close()
 	pemFile.WriteString(*result.KeyMaterial)
 	if err := pemFile.Sync(); err != nil {
 		return "", err
 	}
 
+	log.Debug("saved key material to pem file")
 	return keyName, nil
 }
 
@@ -194,6 +196,7 @@ func getSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 		GroupNames: aws.StringSlice([]string{name}),
 	})
 	if err != nil {
+		log.Debug(err)
 		return createSecurityGroup(svc)
 	}
 
