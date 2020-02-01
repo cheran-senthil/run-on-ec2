@@ -126,7 +126,11 @@ func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
 	}
 
 	log.Debug("created key pair")
-	pemFile, err := os.Create(fmt.Sprintf("%s.pem", keyName))
+	if err := os.MkdirAll(filepath.Dir(keyPath), os.ModePerm); err != nil {
+		return "", err
+	}
+
+	pemFile, err := os.Create(keyPath)
 	if err != nil {
 		return "", err
 	}
