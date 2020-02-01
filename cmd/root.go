@@ -75,6 +75,11 @@ func init() {
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
+	if duration < 0 {
+		log.Warn("instance will persist")
+		return
+	}
+
 	log.Info("cleaning up")
 	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 }
