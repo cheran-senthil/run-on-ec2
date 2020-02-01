@@ -4,7 +4,6 @@
 run-on-ec2 is a CLI to quickly execute scripts on an AWS EC2 instance.
 
 ## Prerequisites
-
 Create an AWS IAM user, [here](https://console.aws.amazon.com/iam/home?#/users).
 
 Install and configure [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html).
@@ -19,6 +18,11 @@ aws_secret_access_key = YOUR_IAM_SECRET_KEY
 ## Installation
 ```
 $ go install
+```
+
+Alternatively, you can build the binary offline with,
+```
+$ go build -mod=vendor
 ```
 
 ## Help
@@ -40,7 +44,7 @@ Flags:
 ```
 
 ## Apache License 2.0
-  Copyright (c) 2019 Cheran Senthilkumar, Mukundan Senthilkumar
+  Copyright (c) 2020 Cheran Senthilkumar, Mukundan Senthilkumar
 
 [reportcard-url]: https://goreportcard.com/report/github.com/cheran-senthil/run-on-ec2
 [reportcard-image]: https://goreportcard.com/badge/github.com/cheran-senthil/run-on-ec2

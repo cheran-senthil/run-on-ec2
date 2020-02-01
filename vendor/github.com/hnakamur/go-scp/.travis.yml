@@ -1,0 +1,13 @@
+language: go
+
+go:
+  - 1.11.x
+  - tip
+
+sudo: false
+
+env:
+  - GO111MODULE=on
+
+install:
+  - go test -v ./...
