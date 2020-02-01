@@ -81,7 +81,10 @@ func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
 	}
 
 	log.Info("cleaning up")
-	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
+	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
+	if err != nil {
+		panic(err)
+	}
 }
 
 func newEC2Client(region string) (*ec2.EC2, error) {
@@ -131,7 +134,11 @@ func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
 
 	log.Debug("created pem file")
 	defer pemFile.Close()
-	pemFile.WriteString(*result.KeyMaterial)
+	_, err = pemFile.WriteString(*result.KeyMaterial)
+	if err != nil {
+		return "", err
+	}
+
 	if err := pemFile.Sync(); err != nil {
 		return "", err
 	}
@@ -423,7 +430,6 @@ func run(cmd *cobra.Command, args []string) {
 		syscall.SIGTERM,
 		syscall.SIGINT,
 		syscall.SIGQUIT,
-		syscall.SIGKILL,
 		syscall.SIGHUP,
 	)
 
