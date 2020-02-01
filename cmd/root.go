@@ -54,7 +54,7 @@ var (
 	}
 
 	rootCmd = &cobra.Command{
-		Use:   name,
+		Use:   fmt.Sprintf("%s filename", name),
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
 		Args:  cobra.ExactArgs(1),
 		Run:   run,
