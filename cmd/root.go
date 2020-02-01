@@ -67,6 +67,7 @@ func init() {
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
+	rootCmd.Flags().Bool("verbose", false, "verbose logs")
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
@@ -74,29 +75,33 @@ func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
 	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 }
 
-func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, error) {
+func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, bool, error) {
 	duration, err := cmd.Flags().GetInt("duration")
 	if err != nil {
-		return 0, "", "", false, 0, err
+		return 0, "", "", false, 0, false, err
 	}
 	instanceType, err := cmd.Flags().GetString("instance")
 	if err != nil {
-		return 0, "", "", false, 0, err
+		return 0, "", "", false, 0, false, err
 	}
 	region, err := cmd.Flags().GetString("region")
 	if err != nil {
-		return 0, "", "", false, 0, err
+		return 0, "", "", false, 0, false, err
 	}
 	spot, err := cmd.Flags().GetBool("spot")
 	if err != nil {
-		return 0, "", "", false, 0, err
+		return 0, "", "", false, 0, false, err
 	}
 	volume, err := cmd.Flags().GetInt64("volume")
 	if err != nil {
-		return 0, "", "", false, 0, err
+		return 0, "", "", false, 0, false, err
+	}
+	verbose, err := cmd.Flags().GetBool("verbose")
+	if err != nil {
+		return 0, "", "", false, 0, false, err
 	}
 
-	return duration, instanceType, region, spot, volume, nil
+	return duration, instanceType, region, spot, volume, verbose, nil
 }
 
 func newEC2Client(region string) (*ec2.EC2, error) {
@@ -375,10 +380,14 @@ func runCmd(client *ssh.Client, runCmd string) error {
 
 func run(cmd *cobra.Command, args []string) {
 	filename := args[0]
-	duration, instanceType, region, spot, volume, err := getFlags(cmd)
+	duration, instanceType, region, spot, volume, verbose, err := getFlags(cmd)
 	if err != nil {
 		log.WithError(err).Error()
 		return
+	}
+
+	if verbose {
+		log.SetLevel(log.DebugLevel)
 	}
 
 	log.WithFields(log.Fields{
