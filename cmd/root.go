@@ -146,8 +146,13 @@ func getKeyPair(svc *ec2.EC2, region string) (string, error) {
 	}
 
 	defer pemFile.Close()
-	pemFile.WriteString(*result.KeyMaterial)
-	pemFile.Sync()
+	if err := pemFile.WriteString(*result.KeyMaterial); err != nil {
+		return "", err
+	}
+
+	if err := pemFile.Sync(); err != nil {
+		return "", err
+	}
 
 	return keyName, nil
 }
@@ -362,7 +367,10 @@ func runCmd(client *ssh.Client, runCmd string) error {
 	}
 
 	log.Debug("new stderr pipe initialized")
-	sess.Start(runCmd)
+	if err := sess.Start(runCmd); err != nil {
+		return err
+	}
+
 	quit := make(chan bool)
 	go func() {
 		for {
@@ -376,11 +384,19 @@ func runCmd(client *ssh.Client, runCmd string) error {
 		}
 	}()
 
-	sess.Wait()
-	quit <- true
+	if err := sess.Wait(); err != nil {
+		return err
+	}
 
-	io.Copy(os.Stdout, stdoutPipe)
-	io.Copy(os.Stderr, stderrPipe)
+	quit <- true
+	if err := io.Copy(os.Stdout, stdoutPipe); err != nil {
+		return err
+	}
+
+	if err := io.Copy(os.Stderr, stderrPipe); err != nil {
+		return err
+	}
+
 	return nil
 }
 
