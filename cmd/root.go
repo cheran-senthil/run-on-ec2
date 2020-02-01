@@ -71,7 +71,7 @@ func init() {
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
-	log.Debug("cleaning up")
+	log.Info("cleaning up")
 	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 }
 
@@ -135,9 +135,11 @@ func getKeyPair(svc *ec2.EC2, region string) (string, error) {
 	keyName := fmt.Sprintf("%s-%s", name, region)
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 	if err != nil {
+		log.Warn("failed to create key pair")
 		return keyName, nil
 	}
 
+	log.Debug("created key pair")
 	pemFile, err := os.Create(fmt.Sprintf("%s.pem", keyName))
 	if err != nil {
 		return "", err
@@ -215,7 +217,7 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	for err != nil ||
 		len(describeRes.SpotInstanceRequests) == 0 ||
 		describeRes.SpotInstanceRequests[0].InstanceId == nil {
-		log.WithError(err).Debug("failed to describe spot instance")
+		log.Debug("failed to describe spot instance")
 		describeRes, err = svc.DescribeSpotInstanceRequests(spotInstanceRequest)
 		time.Sleep(time.Second)
 	}
@@ -230,16 +232,19 @@ func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume in
 		return nil, fmt.Errorf("Could not get block device mappings, %v", err)
 	}
 
+	log.Debug("got block device mappings")
 	keyName, err := getKeyPair(svc, region)
 	if err != nil {
 		return nil, fmt.Errorf("Could not get key pair, %v", err)
 	}
 
+	log.Debug("got key pair")
 	securityGroupIds, err := getSecurityGroup(svc)
 	if err != nil {
 		return nil, fmt.Errorf("Could not get security group, %v", err)
 	}
 
+	log.Debug("got security group")
 	var instanceID string
 	if spot {
 		requestRes, err := svc.RequestSpotInstances(&ec2.RequestSpotInstancesInput{
@@ -255,6 +260,7 @@ func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume in
 			return nil, err
 		}
 
+		log.Debug("requested spot instance")
 		instanceID = getSpotInstanceID(svc, requestRes)
 	} else {
 		runRes, err := svc.RunInstances(&ec2.RunInstancesInput{
@@ -273,6 +279,7 @@ func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume in
 		instanceID = aws.StringValue(runRes.Instances[0].InstanceId)
 	}
 
+	log.WithField("instanceID", instanceID).Debug("obtained instanceID")
 	describeInstancesRes, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
 		InstanceIds: aws.StringSlice([]string{instanceID}),
 	})
@@ -322,7 +329,6 @@ func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
 }
 
 func copyFile(sshClient *ssh.Client, filename string) error {
-	log.Debug("copying file")
 	scpClient := scp.NewSCP(sshClient)
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
@@ -405,7 +411,7 @@ func run(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	log.Info("new EC2 client initialized")
+	log.Info("new EC2 client initialized, initializing instance...")
 	instance, err := runInstance(svc, spot, instanceType, region, volume)
 	if err != nil {
 		log.WithError(err).Error()
@@ -420,7 +426,7 @@ func run(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}()
 
-	log.Info("new instance running")
+	log.Info("new instance running, initializing SSH client...")
 	sshClient, err := newSSHClient(region, aws.StringValue(instance.PublicIpAddress))
 	if err != nil {
 		log.WithError(err).Error()
@@ -428,18 +434,18 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	defer sshClient.Close()
-	log.Info("new SSH client initialized")
+	log.Info("new SSH client initialized, copying file...")
 	if err = copyFile(sshClient, filename); err != nil {
 		log.WithError(err).Error()
 		return
 	}
 
-	log.Info("copied file")
-	if err := runCmd(sshClient, fmt.Sprintf("ls -l %s", filename)); err != nil {
+	log.Info("copied file, executing command...")
+	if err := runCmd(sshClient, fmt.Sprintf("echo \"successfully copied %s\"", filename)); err != nil {
 		log.WithError(err).Error()
 	}
 
-	log.Info("execution complete")
+	log.Info("execution complete, sleeping...")
 	time.Sleep(time.Duration(duration) * time.Second)
 	atexit(svc, duration, instance)
 }
