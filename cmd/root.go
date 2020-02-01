@@ -405,6 +405,7 @@ func run(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	defer atexit(svc, duration, instance)
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt,
 		syscall.SIGTERM,
@@ -419,7 +420,6 @@ func run(cmd *cobra.Command, args []string) {
 		atexit(svc, duration, instance)
 		os.Exit(1)
 	}()
-	defer atexit(svc, duration, instance)
 
 	log.Info("new instance running, initializing SSH client...")
 	sshClient, err := newSSHClient(keyPath, aws.StringValue(instance.PublicIpAddress))
