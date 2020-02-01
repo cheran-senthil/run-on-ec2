@@ -66,8 +66,8 @@ func init() {
 	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
-	rootCmd.Flags().Int64P("volume", "v", 8, "volume attached in GiB")
-	rootCmd.Flags().Bool("verbose", false, "verbose logs")
+	rootCmd.Flags().BoolP("verbose", "v", false, "verbose logs")
+	rootCmd.Flags().Int64P("volume", "m", 8, "volume attached in GiB")
 }
 
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
@@ -75,33 +75,33 @@ func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
 	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 }
 
-func getFlags(cmd *cobra.Command) (int, string, string, bool, int64, bool, error) {
+func getFlags(cmd *cobra.Command) (int, string, string, bool, bool, int64, error) {
 	duration, err := cmd.Flags().GetInt("duration")
 	if err != nil {
-		return 0, "", "", false, 0, false, err
+		return 0, "", "", false, false, 0, err
 	}
 	instanceType, err := cmd.Flags().GetString("instance")
 	if err != nil {
-		return 0, "", "", false, 0, false, err
+		return 0, "", "", false, false, 0, err
 	}
 	region, err := cmd.Flags().GetString("region")
 	if err != nil {
-		return 0, "", "", false, 0, false, err
+		return 0, "", "", false, false, 0, err
 	}
 	spot, err := cmd.Flags().GetBool("spot")
 	if err != nil {
-		return 0, "", "", false, 0, false, err
-	}
-	volume, err := cmd.Flags().GetInt64("volume")
-	if err != nil {
-		return 0, "", "", false, 0, false, err
+		return 0, "", "", false, false, 0, err
 	}
 	verbose, err := cmd.Flags().GetBool("verbose")
 	if err != nil {
-		return 0, "", "", false, 0, false, err
+		return 0, "", "", false, false, 0, err
+	}
+	volume, err := cmd.Flags().GetInt64("volume")
+	if err != nil {
+		return 0, "", "", false, false, 0, err
 	}
 
-	return duration, instanceType, region, spot, volume, verbose, nil
+	return duration, instanceType, region, spot, verbose, volume, nil
 }
 
 func newEC2Client(region string) (*ec2.EC2, error) {
@@ -146,10 +146,7 @@ func getKeyPair(svc *ec2.EC2, region string) (string, error) {
 	}
 
 	defer pemFile.Close()
-	if err := pemFile.WriteString(*result.KeyMaterial); err != nil {
-		return "", err
-	}
-
+	pemFile.WriteString(*result.KeyMaterial)
 	if err := pemFile.Sync(); err != nil {
 		return "", err
 	}
@@ -389,20 +386,14 @@ func runCmd(client *ssh.Client, runCmd string) error {
 	}
 
 	quit <- true
-	if err := io.Copy(os.Stdout, stdoutPipe); err != nil {
-		return err
-	}
-
-	if err := io.Copy(os.Stderr, stderrPipe); err != nil {
-		return err
-	}
-
+	io.Copy(os.Stdout, stdoutPipe)
+	io.Copy(os.Stderr, stderrPipe)
 	return nil
 }
 
 func run(cmd *cobra.Command, args []string) {
 	filename := args[0]
-	duration, instanceType, region, spot, volume, verbose, err := getFlags(cmd)
+	duration, instanceType, region, spot, verbose, volume, err := getFlags(cmd)
 	if err != nil {
 		log.WithError(err).Error()
 		return
