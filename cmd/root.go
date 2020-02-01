@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/signal"
+	"os/user"
 	"syscall"
 	"time"
 
@@ -132,7 +133,12 @@ func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.Bl
 }
 
 func getKeyPair(svc *ec2.EC2, region string) (string, error) {
-	keyName := fmt.Sprintf("%s-%s", name, region)
+	user, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+
+	keyName := fmt.Sprintf("%s-%s-%s", name, region, user.Username)
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 	if err != nil {
 		log.Warn("failed to create key pair")
