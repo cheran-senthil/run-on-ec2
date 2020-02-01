@@ -62,7 +62,7 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().IntP("duration", "d", 600, "duration time of ec2 instance (seconds)")
+	rootCmd.Flags().IntP("duration", "d", 10, "duration time (minutes) of ec2 instance")
 	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances (default true)")
@@ -453,7 +453,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	log.Info("execution complete, sleeping...")
-	time.Sleep(time.Duration(duration) * time.Second)
+	time.Sleep(time.Duration(duration) * time.Minute)
 	atexit(svc, duration, instance)
 }
 
