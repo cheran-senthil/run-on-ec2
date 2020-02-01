@@ -112,18 +112,7 @@ func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.Bl
 }
 
 func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
-	var keyName string
-	if keyPath == "" {
-		user, err := user.Current()
-		if err != nil {
-			return "", err
-		}
-
-		keyName = fmt.Sprintf("%s-%s-%s", name, region, user.Username)
-	} else {
-		keyName = strings.TrimSuffix(filepath.Base(keyPath), filepath.Ext(filepath.Base(keyPath)))
-	}
-
+	keyName := strings.TrimSuffix(filepath.Base(keyPath), filepath.Ext(filepath.Base(keyPath)))
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 	if err != nil {
 		log.Warn("failed to create key pair, assuming key pair exists")
@@ -402,6 +391,17 @@ func run(cmd *cobra.Command, args []string) {
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	if verbose {
 		log.SetLevel(log.DebugLevel)
+	}
+
+	if keyPath == "" {
+		user, err := user.Current()
+		if err != nil {
+			log.Error(err)
+			return
+		}
+
+		keyPath = fmt.Sprintf("%s-%s-%s.pem", name, region, user.Username)
+		log.Warnf("no key path provided, assuming ./%s", keyPath)
 	}
 
 	svc, err := newEC2Client(region)
