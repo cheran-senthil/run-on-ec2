@@ -63,8 +63,9 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().IntP("duration", "d", 10, "duration time (minutes) of ec2 instance")
+	rootCmd.Flags().IntP("duration", "d", 10, "persistence time in minutes, of ec2 instance after execution")
 	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
+	rootCmd.Flags().StringP("key", "k", "", "key pair name")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().BoolP("verbose", "v", false, "verbose logs (default false)")
@@ -74,35 +75,6 @@ func init() {
 func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
 	log.Info("cleaning up")
 	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
-}
-
-func getFlags(cmd *cobra.Command) (int, string, string, bool, bool, int64, error) {
-	duration, err := cmd.Flags().GetInt("duration")
-	if err != nil {
-		return 0, "", "", false, false, 0, err
-	}
-	instanceType, err := cmd.Flags().GetString("instance")
-	if err != nil {
-		return 0, "", "", false, false, 0, err
-	}
-	region, err := cmd.Flags().GetString("region")
-	if err != nil {
-		return 0, "", "", false, false, 0, err
-	}
-	spot, err := cmd.Flags().GetBool("spot")
-	if err != nil {
-		return 0, "", "", false, false, 0, err
-	}
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return 0, "", "", false, false, 0, err
-	}
-	volume, err := cmd.Flags().GetInt64("volume")
-	if err != nil {
-		return 0, "", "", false, false, 0, err
-	}
-
-	return duration, instanceType, region, spot, verbose, volume, nil
 }
 
 func newEC2Client(region string) (*ec2.EC2, error) {
@@ -132,32 +104,26 @@ func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.Bl
 	}}, nil
 }
 
-func getKeyPair(svc *ec2.EC2, region string) (string, error) {
-	user, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-
-	keyName := fmt.Sprintf("%s-%s-%s", name, region, user.Username)
+func getKeyPair(svc *ec2.EC2, keyName string) error {
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 	if err != nil {
-		log.Warn("failed to create key pair")
-		return keyName, nil
+		log.Warn("failed to create key pair, assuming key pair exists")
+		return nil
 	}
 
 	log.Debug("created key pair")
 	pemFile, err := os.Create(fmt.Sprintf("%s.pem", keyName))
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	defer pemFile.Close()
 	pemFile.WriteString(*result.KeyMaterial)
 	if err := pemFile.Sync(); err != nil {
-		return "", err
+		return err
 	}
 
-	return keyName, nil
+	return nil
 }
 
 func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
@@ -233,7 +199,7 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
 }
 
-func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume int64) (*ec2.Instance, error) {
+func runInstance(svc *ec2.EC2, instanceType, keyName, region string, spot bool, volume int64) (*ec2.Instance, error) {
 	imageID := regionImageIDMap[region]
 	blockDeviceMappings, err := getBlockDeviceMapping(svc, region, volume)
 	if err != nil {
@@ -241,8 +207,7 @@ func runInstance(svc *ec2.EC2, spot bool, instanceType, region string, volume in
 	}
 
 	log.Debug("got block device mappings")
-	keyName, err := getKeyPair(svc, region)
-	if err != nil {
+	if err := getKeyPair(svc, keyName); err != nil {
 		return nil, fmt.Errorf("Could not get key pair, %v", err)
 	}
 
@@ -312,8 +277,8 @@ func pemFileToSigner(pemFile string) (ssh.Signer, error) {
 	return signer, nil
 }
 
-func newSSHClient(region, publicIPAddress string) (*ssh.Client, error) {
-	signer, err := pemFileToSigner(fmt.Sprintf("%s-%s.pem", name, region))
+func newSSHClient(keyName, publicIPAddress string) (*ssh.Client, error) {
+	signer, err := pemFileToSigner(fmt.Sprintf("%s.pem", keyName))
 	if err != nil {
 		return nil, err
 	}
@@ -399,24 +364,22 @@ func runCmd(client *ssh.Client, runCmd string) error {
 
 func run(cmd *cobra.Command, args []string) {
 	filename := args[0]
-	duration, instanceType, region, spot, verbose, volume, err := getFlags(cmd)
-	if err != nil {
-		log.WithError(err).Error()
-		return
+	duration, _ := cmd.Flags().GetInt("duration")
+	instanceType, _ := cmd.Flags().GetString("instance")
+	keyName, _ := cmd.Flags().GetString("key")
+	region, _ := cmd.Flags().GetString("region")
+	spot, _ := cmd.Flags().GetBool("spot")
+	volume, _ := cmd.Flags().GetInt64("volume")
+	verbose, _ := cmd.Flags().GetBool("verbose")
+
+	user, err := user.Current()
+	if keyName == "" {
+		keyName = fmt.Sprintf("%s-%s-%s", name, region, user.Username)
 	}
 
 	if verbose {
 		log.SetLevel(log.DebugLevel)
 	}
-
-	log.WithFields(log.Fields{
-		"filename":     filename,
-		"duration":     duration,
-		"instanceType": instanceType,
-		"region":       region,
-		"spot":         spot,
-		"volume":       volume,
-	}).Info("flags")
 
 	svc, err := newEC2Client(region)
 	if err != nil {
@@ -425,7 +388,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	log.Info("new EC2 client initialized, initializing instance...")
-	instance, err := runInstance(svc, spot, instanceType, region, volume)
+	instance, err := runInstance(svc, instanceType, keyName, region, spot, volume)
 	if err != nil {
 		log.WithError(err).Error()
 		return
@@ -440,7 +403,7 @@ func run(cmd *cobra.Command, args []string) {
 	}()
 
 	log.Info("new instance running, initializing SSH client...")
-	sshClient, err := newSSHClient(region, aws.StringValue(instance.PublicIpAddress))
+	sshClient, err := newSSHClient(keyName, aws.StringValue(instance.PublicIpAddress))
 	if err != nil {
 		log.WithError(err).Error()
 		return
