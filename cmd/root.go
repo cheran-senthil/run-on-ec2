@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,8 +66,8 @@ var (
 
 func init() {
 	rootCmd.Flags().IntP("duration", "d", 10, "persistence time in minutes, of ec2 instance after execution")
-	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
-	rootCmd.Flags().StringP("key", "k", "", "key pair name")
+	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
+	rootCmd.Flags().StringP("key-path", "k", "", "key path of a valid aws key pair (defaults to creating a new key pair \"run-on-ec2-region-username\")")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().BoolP("verbose", "v", false, "verbose logs (default false)")
@@ -104,26 +106,38 @@ func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.Bl
 	}}, nil
 }
 
-func getKeyPair(svc *ec2.EC2, keyName string) error {
+func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
+	var keyName string
+	if keyPath == "" {
+		user, err := user.Current()
+		if err != nil {
+			return "", err
+		}
+
+		keyName = fmt.Sprintf("%s-%s-%s", name, region, user.Username)
+	} else {
+		keyName = strings.TrimSuffix(filepath.Base(keyPath), filepath.Ext(filepath.Base(keyPath)))
+	}
+
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 	if err != nil {
 		log.Warn("failed to create key pair, assuming key pair exists")
-		return nil
+		return keyName, nil
 	}
 
 	log.Debug("created key pair")
 	pemFile, err := os.Create(fmt.Sprintf("%s.pem", keyName))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	defer pemFile.Close()
 	pemFile.WriteString(*result.KeyMaterial)
 	if err := pemFile.Sync(); err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	return keyName, nil
 }
 
 func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
@@ -199,7 +213,7 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
 }
 
-func runInstance(svc *ec2.EC2, instanceType, keyName, region string, spot bool, volume int64) (*ec2.Instance, error) {
+func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, volume int64) (*ec2.Instance, error) {
 	imageID := regionImageIDMap[region]
 	blockDeviceMappings, err := getBlockDeviceMapping(svc, region, volume)
 	if err != nil {
@@ -207,8 +221,9 @@ func runInstance(svc *ec2.EC2, instanceType, keyName, region string, spot bool, 
 	}
 
 	log.Debug("got block device mappings")
-	if err := getKeyPair(svc, keyName); err != nil {
-		return nil, fmt.Errorf("Could not get key pair, %v", err)
+	keyName, err := getKeyPair(svc, keyPath, region)
+	if err != nil {
+		log.Error(err)
 	}
 
 	log.Debug("got key pair")
@@ -252,7 +267,7 @@ func runInstance(svc *ec2.EC2, instanceType, keyName, region string, spot bool, 
 		instanceID = aws.StringValue(runRes.Instances[0].InstanceId)
 	}
 
-	log.WithField("instanceID", instanceID).Debug("obtained instanceID")
+	log.Debug("got instanceID")
 	describeInstancesRes, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
 		InstanceIds: aws.StringSlice([]string{instanceID}),
 	})
@@ -263,8 +278,8 @@ func runInstance(svc *ec2.EC2, instanceType, keyName, region string, spot bool, 
 	return describeInstancesRes.Reservations[0].Instances[0], nil
 }
 
-func pemFileToSigner(pemFile string) (ssh.Signer, error) {
-	pemBytes, err := ioutil.ReadFile(pemFile)
+func pemFileToSigner(keyPath string) (ssh.Signer, error) {
+	pemBytes, err := ioutil.ReadFile(keyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -277,8 +292,8 @@ func pemFileToSigner(pemFile string) (ssh.Signer, error) {
 	return signer, nil
 }
 
-func newSSHClient(keyName, publicIPAddress string) (*ssh.Client, error) {
-	signer, err := pemFileToSigner(fmt.Sprintf("%s.pem", keyName))
+func newSSHClient(keyPath, publicIPAddress string) (*ssh.Client, error) {
+	signer, err := pemFileToSigner(keyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +304,7 @@ func newSSHClient(keyName, publicIPAddress string) (*ssh.Client, error) {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	})
 	for err != nil {
-		log.WithError(err).Debug("failed to initialize SSH client")
+		log.Debug(err)
 		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
 			User:            "arch",
 			Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
@@ -364,33 +379,29 @@ func runCmd(client *ssh.Client, runCmd string) error {
 
 func run(cmd *cobra.Command, args []string) {
 	filename := args[0]
+
 	duration, _ := cmd.Flags().GetInt("duration")
-	instanceType, _ := cmd.Flags().GetString("instance")
-	keyName, _ := cmd.Flags().GetString("key")
+	instanceType, _ := cmd.Flags().GetString("instance-type")
+	keyPath, _ := cmd.Flags().GetString("key-path")
 	region, _ := cmd.Flags().GetString("region")
 	spot, _ := cmd.Flags().GetBool("spot")
 	volume, _ := cmd.Flags().GetInt64("volume")
+
 	verbose, _ := cmd.Flags().GetBool("verbose")
-
-	user, err := user.Current()
-	if keyName == "" {
-		keyName = fmt.Sprintf("%s-%s-%s", name, region, user.Username)
-	}
-
 	if verbose {
 		log.SetLevel(log.DebugLevel)
 	}
 
 	svc, err := newEC2Client(region)
 	if err != nil {
-		log.WithError(err).Error()
+		log.Error(err)
 		return
 	}
 
 	log.Info("new EC2 client initialized, initializing instance...")
-	instance, err := runInstance(svc, instanceType, keyName, region, spot, volume)
+	instance, err := runInstance(svc, instanceType, keyPath, region, spot, volume)
 	if err != nil {
-		log.WithError(err).Error()
+		log.Error(err)
 		return
 	}
 
@@ -403,22 +414,22 @@ func run(cmd *cobra.Command, args []string) {
 	}()
 
 	log.Info("new instance running, initializing SSH client...")
-	sshClient, err := newSSHClient(keyName, aws.StringValue(instance.PublicIpAddress))
+	sshClient, err := newSSHClient(keyPath, aws.StringValue(instance.PublicIpAddress))
 	if err != nil {
-		log.WithError(err).Error()
+		log.Error(err)
 		return
 	}
 
 	defer sshClient.Close()
 	log.Info("new SSH client initialized, copying file...")
 	if err = copyFile(sshClient, filename); err != nil {
-		log.WithError(err).Error()
+		log.Error(err)
 		return
 	}
 
 	log.Info("copied file, executing command...")
 	if err := runCmd(sshClient, fmt.Sprintf("echo \"successfully copied %s\"", filename)); err != nil {
-		log.WithError(err).Error()
+		log.Error(err)
 	}
 
 	log.Info("execution complete, sleeping...")
