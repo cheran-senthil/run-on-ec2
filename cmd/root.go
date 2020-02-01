@@ -65,7 +65,7 @@ func init() {
 	rootCmd.Flags().IntP("duration", "d", 10, "duration time (minutes) of ec2 instance")
 	rootCmd.Flags().StringP("instance", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
-	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances (default true)")
+	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().BoolP("verbose", "v", false, "verbose logs (default false)")
 	rootCmd.Flags().Int64P("volume", "m", 8, "volume attached in GiB")
 }

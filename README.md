@@ -3,7 +3,7 @@
 
 run-on-ec2 is a CLI to quickly execute scripts on an AWS EC2 instance.
 
-# Prerequisites
+## Prerequisites
 
 Create an AWS IAM user, [here](https://console.aws.amazon.com/iam/home?#/users).
 
@@ -16,19 +16,30 @@ aws_access_key_id = YOUR_IAM_KEY_ID
 aws_secret_access_key = YOUR_IAM_SECRET_KEY
 ```
 
-# Installation
+## Installation
 ```
 $ go install
 ```
 
-# Usage
+## Help
 ```
-$ run-on-ec2 filename
+$ run-on-ec2 -h
+CLI to quickly execute scripts on an AWS EC2 instance
+
+Usage:
+  run-on-ec2 filename [flags]
+
+Flags:
+  -d, --duration int      duration time (minutes) of ec2 instance (default 10)
+  -h, --help              help for run-on-ec2
+  -i, --instance string   ec2 instance type (default "t2.micro")
+  -r, --region string     aws session region (default "eu-central-1")
+  -s, --spot              request spot instances (default true)
+  -v, --verbose           verbose logs (default false)
+  -m, --volume int        volume attached in GiB (default 8)
 ```
 
-
-# Apache License 2.0
-
+## Apache License 2.0
   Copyright (c) 2019 Cheran Senthilkumar, Mukundan Senthilkumar
 
 [reportcard-url]: https://goreportcard.com/report/github.com/cheran-senthil/run-on-ec2
