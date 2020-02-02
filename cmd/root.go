@@ -327,13 +327,42 @@ func copyFile(sshClient *ssh.Client, filename string) error {
 	}
 
 	if fileInfo.IsDir() {
-		return scpClient.SendDir(filename, filename, nil)
+		return scpClient.SendDir(filename, filepath.Base(filename), nil)
 	}
 
-	return scpClient.SendFile(filename, filename)
+	return scpClient.SendFile(filename, filepath.Base(filename))
 }
 
-func runCmd(client *ssh.Client, runCmd string) error {
+func getExecCmd(filename string) (string, error) {
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return "", err
+	}
+
+	filename = filepath.Base(filename)
+	if fileInfo.IsDir() {
+		return fmt.Sprintf("cd %s && chmod +x main.* && ./main.*", filename), nil
+	}
+
+	ext := filepath.Ext(filename)
+	filenameWithoutExt := strings.TrimSuffix(filename, ext)
+	switch ext {
+	case ".c":
+		return fmt.Sprintf("gcc -g -static -std=gnu11 -lm -Wfatal-errors %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
+	case ".cpp":
+		return fmt.Sprintf("g++ -static -Wall -Wextra -Wno-unknown-pragmas -pedantic -std=c++17 -O2 -Wshadow -Wformat=2 -Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -D_FORTIFY_SOURCE=2 -fno-sanitize-recover -fstack-protector %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
+	default:
+		return fmt.Sprintf("chmod +x %s && ./%s", filename, filename), nil
+	}
+}
+
+func runCmd(client *ssh.Client, filename string) error {
+	cmd, err := getExecCmd(filename)
+	if err != nil {
+		return err
+	}
+
+	log.Debug(cmd)
 	sess, err := client.NewSession()
 	if err != nil {
 		return err
@@ -353,7 +382,7 @@ func runCmd(client *ssh.Client, runCmd string) error {
 	}
 
 	log.Debug("new stderr pipe initialized")
-	if err := sess.Start(runCmd); err != nil {
+	if err := sess.Start(cmd); err != nil {
 		return err
 	}
 
@@ -448,7 +477,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	log.Info("copied file, executing command...")
-	if err := runCmd(sshClient, fmt.Sprintf("echo \"successfully copied %s\"", filename)); err != nil {
+	if err := runCmd(sshClient, filename); err != nil {
 		log.Error(err)
 	}
 
