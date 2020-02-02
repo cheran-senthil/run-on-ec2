@@ -65,7 +65,8 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().IntP("duration", "d", 10, "persistence time in minutes, of ec2 instance after execution")
+	rootCmd.Flags().IntP("duration", "d", 10, "persistence time in minutes of ec2 instance after execution")
+	rootCmd.Flags().BoolP("exec", "e", true, "execute the file")
 	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("key-path", "k", "", "key path of a valid aws key pair (defaults to creating a new key pair)")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
@@ -340,7 +341,7 @@ func copyFile(sshClient *ssh.Client, filename string) error {
 	return scpClient.SendFile(filename, filepath.Base(filename))
 }
 
-func getExecCmd(filename string) (string, error) {
+func getCmd(filename string) (string, error) {
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
 		return "", err
@@ -358,13 +359,15 @@ func getExecCmd(filename string) (string, error) {
 		return fmt.Sprintf("gcc -g -static -std=gnu11 -lm -Wfatal-errors %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
 	case ".cpp":
 		return fmt.Sprintf("g++ -static -Wall -Wextra -Wno-unknown-pragmas -pedantic -std=c++17 -O2 -Wshadow -Wformat=2 -Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -D_FORTIFY_SOURCE=2 -fno-sanitize-recover -fstack-protector %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
+	case ".go":
+		return fmt.Sprintf("go run %s", filename), nil
 	default:
 		return fmt.Sprintf("chmod +x %s && ./%s", filename, filename), nil
 	}
 }
 
 func runCmd(client *ssh.Client, filename string) error {
-	cmd, err := getExecCmd(filename)
+	cmd, err := getCmd(filename)
 	if err != nil {
 		return err
 	}
@@ -420,6 +423,7 @@ func run(cmd *cobra.Command, args []string) {
 	filename := args[0]
 
 	duration, _ := cmd.Flags().GetInt("duration")
+	execute, _ := cmd.Flags().GetBool("exec")
 	instanceType, _ := cmd.Flags().GetString("instance-type")
 	keyPath, _ := cmd.Flags().GetString("key-path")
 	region, _ := cmd.Flags().GetString("region")
@@ -482,12 +486,17 @@ func run(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	log.Info("copied file, executing command...")
-	if err := runCmd(sshClient, filename); err != nil {
-		log.Error(err)
+	if execute {
+		log.Info("copied file, executing command...")
+		if err := runCmd(sshClient, filename); err != nil {
+			log.Error(err)
+		}
+
+		log.Info("execution complete, sleeping...")
+	} else {
+		log.Info("copied file, sleeping...")
 	}
 
-	log.Info("execution complete, sleeping...")
 	time.Sleep(time.Duration(duration) * time.Minute)
 }
 

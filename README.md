@@ -35,6 +35,7 @@ Usage:
 
 Flags:
   -d, --duration int           persistence time in minutes, of ec2 instance after execution (default 10)
+  -e, --exec                   execute the file (default true)
   -h, --help                   help for run-on-ec2
   -i, --instance-type string   ec2 instance type (default "t2.micro")
   -k, --key-path string        key path of a valid aws key pair (defaults to creating a new key pair)
