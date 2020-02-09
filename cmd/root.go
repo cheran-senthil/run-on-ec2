@@ -75,7 +75,11 @@ func init() {
 func atexit(svc *ec2.EC2, instance *ec2.Instance, err error) {
 	log.Info("cleaning up")
 	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
-	log.Fatal(err)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	os.Exit(0)
 }
 
 func newEC2Client(region string) (*ec2.EC2, error) {
@@ -259,18 +263,18 @@ func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, 
 	}
 
 	log.Debug("got instanceID")
-	describeInstancesRes, err := svc.DescribeInstances(&ec2.DescribeInstancesInput{
+	describeInstanceInp := &ec2.DescribeInstancesInput{
 		InstanceIds: aws.StringSlice([]string{instanceID}),
-	})
+	}
+
+	describeInstancesRes, err := svc.DescribeInstances(describeInstanceInp)
 	if err != nil {
 		return nil, err
 	}
 
 	for describeInstancesRes.Reservations[0].Instances[0].PublicIpAddress == nil {
 		log.Debug("failed to get public IP address")
-		describeInstancesRes, err = svc.DescribeInstances(&ec2.DescribeInstancesInput{
-			InstanceIds: aws.StringSlice([]string{instanceID}),
-		})
+		describeInstancesRes, err = svc.DescribeInstances(describeInstanceInp)
 		if err != nil {
 			return nil, err
 		}
@@ -303,18 +307,15 @@ func newSSHClient(keyPath, publicIPAddress string) (*ssh.Client, error) {
 	}
 
 	log.Debug("got signer")
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
+	sshClientConfig := &ssh.ClientConfig{
 		User:            "arch",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	})
+	}
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), sshClientConfig)
 	for err != nil {
 		log.Debug(err)
-		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), &ssh.ClientConfig{
-			User:            "arch",
-			Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		})
+		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), sshClientConfig)
 		time.Sleep(time.Second)
 	}
 
@@ -456,7 +457,6 @@ func run(cmd *cobra.Command, args []string) {
 	go func() {
 		<-c
 		atexit(svc, instance, errors.New("interrupt caught"))
-		os.Exit(1)
 	}()
 
 	log.Info("new instance running, initializing SSH client...")
