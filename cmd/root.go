@@ -456,7 +456,8 @@ func run(cmd *cobra.Command, args []string) {
 
 	go func() {
 		<-c
-		atexit(svc, instance, errors.New("interrupt caught"))
+		log.Error("interrupt caught")
+		atexit(svc, instance, nil)
 	}()
 
 	log.Info("new instance running, initializing SSH client...")
