@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -25,8 +24,6 @@ import (
 )
 
 var (
-	name = "run-on-ec2"
-
 	regionImageIDMap = map[string]string{
 		"us-east-1":      "ami-0f040c7d22aedeb27",
 		"us-east-2":      "ami-0470431e11a734fd9",
@@ -57,7 +54,7 @@ var (
 	}
 
 	rootCmd = &cobra.Command{
-		Use:   fmt.Sprintf("%s filename", name),
+		Use:   "run-on-ec2 filename [flags]",
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
 		Args:  cobra.ExactArgs(1),
 		Run:   run,
@@ -68,30 +65,23 @@ func init() {
 	rootCmd.Flags().IntP("duration", "d", 10, "persistence time in minutes of ec2 instance after execution")
 	rootCmd.Flags().BoolP("exec", "e", true, "execute the file")
 	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
-	rootCmd.Flags().StringP("key-path", "k", "", "key path of a valid aws key pair (defaults to creating a new key pair)")
+	rootCmd.Flags().StringP("key-path", "k", "", "key path of valid aws key pair (defaults to creating a new key pair)")
 	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().BoolP("verbose", "v", false, "verbose logs (default false)")
 	rootCmd.Flags().Int64P("volume", "m", 8, "volume attached in GiB")
 }
 
-func atexit(svc *ec2.EC2, duration int, instance *ec2.Instance) {
-	if duration < 0 {
-		log.Warn("instance will persist")
-		return
-	}
-
+func atexit(svc *ec2.EC2, instance *ec2.Instance, err error) {
 	log.Info("cleaning up")
-	_, err := svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
-	if err != nil {
-		panic(err)
-	}
+	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
+	log.Fatal(err)
 }
 
 func newEC2Client(region string) (*ec2.EC2, error) {
 	sess, err := session.NewSession(&aws.Config{
 		Region:      aws.String(region),
-		Credentials: credentials.NewSharedCredentials("", name),
+		Credentials: credentials.NewSharedCredentials("", "run-on-ec2"),
 	})
 	if err != nil {
 		return nil, err
@@ -166,28 +156,20 @@ func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 	}
 
 	createRes, err := svc.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
-		GroupName:   aws.String(name),
-		Description: aws.String(name),
+		GroupName:   aws.String("ssh"),
+		Description: aws.String("ssh"),
 		VpcId:       aws.String(vpcID),
 	})
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case "InvalidVpcID.NotFound":
-				return nil, fmt.Errorf("Unable to find VPC with ID %s", vpcID)
-			case "InvalidGroup.Duplicate":
-				return nil, fmt.Errorf("Security group %s already exists", name)
-			}
-		}
-		return nil, fmt.Errorf("Unable to create security group %s, %v", name, err)
+		return nil, err
 	}
 
 	_, err = svc.AuthorizeSecurityGroupIngress(&ec2.AuthorizeSecurityGroupIngressInput{
-		GroupName:     aws.String(name),
+		GroupName:     aws.String("ssh"),
 		IpPermissions: ipPermissions,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Unable to set security group %s ingress, %v", name, err)
+		return nil, fmt.Errorf("Unable to set security group ssh ingress, %v", err)
 	}
 
 	return []*string{createRes.GroupId}, nil
@@ -195,7 +177,7 @@ func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 
 func getSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 	result, err := svc.DescribeSecurityGroups(&ec2.DescribeSecurityGroupsInput{
-		GroupNames: aws.StringSlice([]string{name}),
+		GroupNames: aws.StringSlice([]string{"ssh"}),
 	})
 	if err != nil {
 		log.Debug(err)
@@ -264,9 +246,9 @@ func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, 
 			BlockDeviceMappings: blockDeviceMappings,
 			ImageId:             aws.String(imageID),
 			InstanceType:        aws.String(instanceType),
-			MinCount:            aws.Int64(1),
-			MaxCount:            aws.Int64(1),
 			KeyName:             aws.String(keyName),
+			MaxCount:            aws.Int64(1),
+			MinCount:            aws.Int64(1),
 			SecurityGroupIds:    securityGroupIds,
 		})
 		if err != nil {
@@ -282,6 +264,18 @@ func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, 
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	for describeInstancesRes.Reservations[0].Instances[0].PublicIpAddress == nil {
+		log.Debug("failed to get public IP address")
+		describeInstancesRes, err = svc.DescribeInstances(&ec2.DescribeInstancesInput{
+			InstanceIds: aws.StringSlice([]string{instanceID}),
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		time.Sleep(time.Second)
 	}
 
 	return describeInstancesRes.Reservations[0].Instances[0], nil
@@ -372,26 +366,23 @@ func runCmd(client *ssh.Client, filename string) error {
 		return err
 	}
 
-	log.Debug(cmd)
+	fmt.Println(cmd)
 	sess, err := client.NewSession()
 	if err != nil {
 		return err
 	}
 
 	defer sess.Close()
-	log.Debug("new SSH session initialized")
 	stdoutPipe, err := sess.StdoutPipe()
 	if err != nil {
 		return err
 	}
 
-	log.Debug("new stdout pipe initialized")
 	stderrPipe, err := sess.StderrPipe()
 	if err != nil {
 		return err
 	}
 
-	log.Debug("new stderr pipe initialized")
 	if err := sess.Start(cmd); err != nil {
 		return err
 	}
@@ -436,28 +427,24 @@ func run(cmd *cobra.Command, args []string) {
 	if keyPath == "" {
 		user, err := user.Current()
 		if err != nil {
-			log.Error(err)
-			return
+			log.Fatal(err)
 		}
 
-		keyPath = fmt.Sprintf("%s-%s-%s.pem", name, region, user.Username)
+		keyPath = fmt.Sprintf("%s-%s.pem", region, user.Username)
 		log.Warnf("no key path provided, assuming ./%s", keyPath)
 	}
 
 	svc, err := newEC2Client(region)
 	if err != nil {
-		log.Error(err)
-		return
+		log.Fatal(err)
 	}
 
 	log.Info("new EC2 client initialized, initializing instance...")
 	instance, err := runInstance(svc, instanceType, keyPath, region, spot, volume)
 	if err != nil {
-		log.Error(err)
-		return
+		log.Fatal(err)
 	}
 
-	defer atexit(svc, duration, instance)
 	c := make(chan os.Signal)
 	signal.Notify(c, os.Interrupt,
 		syscall.SIGTERM,
@@ -468,22 +455,20 @@ func run(cmd *cobra.Command, args []string) {
 
 	go func() {
 		<-c
-		atexit(svc, duration, instance)
+		atexit(svc, instance, errors.New("interrupt caught"))
 		os.Exit(1)
 	}()
 
 	log.Info("new instance running, initializing SSH client...")
 	sshClient, err := newSSHClient(keyPath, aws.StringValue(instance.PublicIpAddress))
 	if err != nil {
-		log.Error(err)
-		return
+		atexit(svc, instance, err)
 	}
 
 	defer sshClient.Close()
 	log.Info("new SSH client initialized, copying file...")
 	if err = copyFile(sshClient, filename); err != nil {
-		log.Error(err)
-		return
+		atexit(svc, instance, err)
 	}
 
 	if execute {
@@ -498,6 +483,9 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	time.Sleep(time.Duration(duration) * time.Minute)
+	if duration > 0 {
+		atexit(svc, instance, nil)
+	}
 }
 
 // Execute executes the root command.
