@@ -4,11 +4,11 @@
 run-on-ec2 is a CLI to quickly execute scripts on an AWS EC2 instance.
 
 ## Prerequisites
-Create an AWS IAM user, [here](https://console.aws.amazon.com/iam/home?#/users).
+1. Create an AWS IAM user, [here](https://console.aws.amazon.com/iam/home?#/users).
 
-Install and configure [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html).
+2. Install and configure [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html).
 
-[Add a profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-profiles.html) with the name `run-on-ec2` to `~/.aws/config` (Linux & Mac) or `%USERPROFILE%\.aws\config` (Windows) 
+3. [Add a profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-profiles.html) with the name `run-on-ec2` to `~/.aws/config` (Linux & Mac) or `%USERPROFILE%\.aws\config` (Windows) 
 ```
 [run-on-ec2]
 aws_access_key_id = YOUR_IAM_KEY_ID
