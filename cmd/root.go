@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -386,40 +385,18 @@ func runCmd(client *ssh.Client, filename string) error {
 	}
 
 	defer sess.Close()
-	stdoutPipe, err := sess.StdoutPipe()
-	if err != nil {
-		return err
-	}
 
-	stderrPipe, err := sess.StderrPipe()
-	if err != nil {
-		return err
-	}
+	sess.Stdout = os.Stdout
+	sess.Stderr = os.Stderr
 
 	if err := sess.Start(cmd); err != nil {
 		return err
 	}
 
-	quit := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-quit:
-				return
-			default:
-				_, _ = io.Copy(os.Stdout, stdoutPipe)
-				_, _ = io.Copy(os.Stderr, stderrPipe)
-			}
-		}
-	}()
-
 	if err := sess.Wait(); err != nil {
 		return err
 	}
 
-	quit <- true
-	_, _ = io.Copy(os.Stdout, stdoutPipe)
-	_, _ = io.Copy(os.Stderr, stderrPipe)
 	return nil
 }
 
