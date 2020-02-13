@@ -361,11 +361,10 @@ func getCmd(filename string) (string, error) {
 	case ".c":
 		return fmt.Sprintf("gcc -g -static -std=gnu11 -lm -Wfatal-errors %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
 	case ".cpp":
-		return fmt.Sprintf("g++ -static -Wall -Wextra -Wno-unknown-pragmas -pedantic -std=c++17 -O2 "+
-			"-Wshadow -Wformat=2 -Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align "+
-			"-D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -D_FORTIFY_SOURCE=2 "+
-			"-fno-sanitize-recover -fstack-protector "+
-			"%s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
+		return "g++ -static -Wall -Wextra -Wno-unknown-pragmas -pedantic -std=c++17 -O2 -Wshadow -Wformat=2 " +
+			"-Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align " +
+			"-D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -D_FORTIFY_SOURCE=2 -fno-sanitize-recover -fstack-protector " +
+			fmt.Sprintf("%s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
 	case ".go":
 		return fmt.Sprintf("go run %s", filename), nil
 	default:
