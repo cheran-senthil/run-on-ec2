@@ -75,7 +75,7 @@ func init() {
 }
 
 func atexit(svc *ec2.EC2, instance *ec2.Instance, err error) {
-	log.Info("cleaning up")
+	log.Debug("cleaning up")
 	_, _ = svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 	if err != nil {
 		log.Fatal(err)
@@ -359,7 +359,8 @@ func getCmd(filename string) (string, error) {
 	filenameWithoutExt := strings.TrimSuffix(filename, ext)
 	switch ext {
 	case ".c":
-		return fmt.Sprintf("gcc -g -static -std=gnu11 -lm -Wfatal-errors %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
+		return "gcc -g -static -std=gnu11 -lm -Wfatal-errors " +
+			fmt.Sprintf("%s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
 	case ".cpp":
 		return "g++ -static -Wall -Wextra -Wno-unknown-pragmas -pedantic -std=c++17 -O2 -Wshadow -Wformat=2 " +
 			"-Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align " +
@@ -451,7 +452,7 @@ func run(cmd *cobra.Command, args []string) {
 		log.Fatal(err)
 	}
 
-	log.Info("new EC2 client initialized, initializing instance...")
+	log.Debug("new EC2 client initialized, initializing instance...")
 	instance, err := runInstance(svc, instanceType, keyPath, region, spot, volume)
 	if err != nil {
 		log.Fatal(err)
@@ -471,31 +472,31 @@ func run(cmd *cobra.Command, args []string) {
 		atexit(svc, instance, nil)
 	}()
 
-	log.Info("new instance running, initializing SSH client...")
+	log.Debug("new instance running, initializing SSH client...")
 	sshClient, err := newSSHClient(keyPath, aws.StringValue(instance.PublicIpAddress))
 	if err != nil {
 		atexit(svc, instance, err)
 	}
 
 	defer sshClient.Close()
-	log.Info("new SSH client initialized, copying file...")
+	log.Debug("new SSH client initialized, copying file...")
 	if err = copyFile(sshClient, filename); err != nil {
 		atexit(svc, instance, err)
 	}
 
 	if execute {
-		log.Info("copied file, executing command...")
+		log.Debug("copied file, executing command...")
 		if err := runCmd(sshClient, filename); err != nil {
 			log.Error(err)
 		}
 
-		log.Info("execution complete, sleeping...")
+		log.Debug("execution complete, sleeping...")
 	} else {
-		log.Info("copied file, sleeping...")
+		log.Debug("copied file, sleeping...")
 	}
 
 	time.Sleep(time.Duration(duration) * time.Minute)
-	if duration > 0 {
+	if duration >= 0 {
 		atexit(svc, instance, nil)
 	}
 }
