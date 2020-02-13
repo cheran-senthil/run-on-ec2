@@ -45,18 +45,20 @@ var (
 		"me-south-1":     "ami-054bbb7ef03ab6c36",
 	}
 
+	sshPort       = 22
 	ipPermissions = []*ec2.IpPermission{
 		(&ec2.IpPermission{}).
 			SetIpProtocol("tcp").
-			SetFromPort(22).
-			SetToPort(22).
+			SetFromPort(int64(sshPort)).
+			SetToPort(int64(sshPort)).
 			SetIpRanges([]*ec2.IpRange{(&ec2.IpRange{}).SetCidrIp("0.0.0.0/0")}),
 	}
 
+	args    = 1
 	rootCmd = &cobra.Command{
 		Use:   "run-on-ec2 filename [flags]",
 		Short: "CLI to quickly execute scripts on an AWS EC2 instance",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(args),
 		Run:   run,
 	}
 )
@@ -74,7 +76,7 @@ func init() {
 
 func atexit(svc *ec2.EC2, instance *ec2.Instance, err error) {
 	log.Info("cleaning up")
-	svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
+	_, _ = svc.TerminateInstances(&ec2.TerminateInstancesInput{InstanceIds: []*string{instance.InstanceId}})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -103,13 +105,13 @@ func getBlockDeviceMapping(svc *ec2.EC2, region string, volume int64) ([]*ec2.Bl
 		return nil, err
 	}
 
-	return []*(ec2.BlockDeviceMapping){&ec2.BlockDeviceMapping{
+	return []*ec2.BlockDeviceMapping{{
 		DeviceName: describeRes.Images[0].RootDeviceName,
 		Ebs:        &ec2.EbsBlockDevice{VolumeSize: aws.Int64(volume)},
 	}}, nil
 }
 
-func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
+func getKeyPair(svc *ec2.EC2, keyPath string) (string, error) {
 	keyName := strings.TrimSuffix(filepath.Base(keyPath), filepath.Ext(filepath.Base(keyPath)))
 	result, err := svc.CreateKeyPair(&ec2.CreateKeyPairInput{KeyName: aws.String(keyName)})
 	if err != nil {
@@ -118,7 +120,8 @@ func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
 	}
 
 	log.Debug("created key pair")
-	if err := os.MkdirAll(filepath.Dir(keyPath), os.ModePerm); err != nil {
+	err = os.MkdirAll(filepath.Dir(keyPath), os.ModePerm)
+	if err != nil {
 		return "", err
 	}
 
@@ -145,7 +148,7 @@ func getKeyPair(svc *ec2.EC2, keyPath, region string) (string, error) {
 func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 	result, err := svc.DescribeVpcs(nil)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to describe VPCs, %v", err)
+		return nil, fmt.Errorf("unable to describe VPCs, %v", err)
 	}
 
 	var vpcID string
@@ -156,7 +159,7 @@ func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 	}
 
 	if vpcID == "" {
-		return nil, errors.New("No default VPC found to associate security group with")
+		return nil, errors.New("no default VPC found to associate security group with")
 	}
 
 	createRes, err := svc.CreateSecurityGroup(&ec2.CreateSecurityGroupInput{
@@ -173,7 +176,7 @@ func createSecurityGroup(svc *ec2.EC2) ([]*string, error) {
 		IpPermissions: ipPermissions,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Unable to set security group ssh ingress, %v", err)
+		return nil, fmt.Errorf("unable to set security group ssh ingress, %v", err)
 	}
 
 	return []*string{createRes.GroupId}, nil
@@ -235,11 +238,11 @@ func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, 
 	imageID := regionImageIDMap[region]
 	blockDeviceMappings, err := getBlockDeviceMapping(svc, region, volume)
 	if err != nil {
-		return nil, fmt.Errorf("Could not get block device mappings, %v", err)
+		return nil, fmt.Errorf("could not get block device mappings, %v", err)
 	}
 
 	log.Debug("got block device mappings")
-	keyName, err := getKeyPair(svc, keyPath, region)
+	keyName, err := getKeyPair(svc, keyPath)
 	if err != nil {
 		log.Error(err)
 	}
@@ -247,7 +250,7 @@ func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, 
 	log.Debug("got key pair")
 	securityGroupIds, err := getSecurityGroup(svc)
 	if err != nil {
-		return nil, fmt.Errorf("Could not get security group, %v", err)
+		return nil, fmt.Errorf("could not get security group, %v", err)
 	}
 
 	log.Debug("got security group")
@@ -269,13 +272,14 @@ func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, 
 		log.Debug("requested spot instance")
 		instanceID = getSpotInstanceID(svc, requestRes)
 	} else {
+		instanceCount := 1
 		runRes, err := svc.RunInstances(&ec2.RunInstancesInput{
 			BlockDeviceMappings: blockDeviceMappings,
 			ImageId:             aws.String(imageID),
 			InstanceType:        aws.String(instanceType),
 			KeyName:             aws.String(keyName),
-			MaxCount:            aws.Int64(1),
-			MinCount:            aws.Int64(1),
+			MaxCount:            aws.Int64(int64(instanceCount)),
+			MinCount:            aws.Int64(int64(instanceCount)),
 			SecurityGroupIds:    securityGroupIds,
 		})
 		if err != nil {
@@ -314,7 +318,7 @@ func newSSHClient(keyPath, publicIPAddress string) (*ssh.Client, error) {
 	sshClientConfig := &ssh.ClientConfig{
 		User:            "arch",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint
 	}
 	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), sshClientConfig)
 	for err != nil {
@@ -357,7 +361,11 @@ func getCmd(filename string) (string, error) {
 	case ".c":
 		return fmt.Sprintf("gcc -g -static -std=gnu11 -lm -Wfatal-errors %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
 	case ".cpp":
-		return fmt.Sprintf("g++ -static -Wall -Wextra -Wno-unknown-pragmas -pedantic -std=c++17 -O2 -Wshadow -Wformat=2 -Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align -D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -D_FORTIFY_SOURCE=2 -fno-sanitize-recover -fstack-protector %s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
+		return fmt.Sprintf("g++ -static -Wall -Wextra -Wno-unknown-pragmas -pedantic -std=c++17 -O2 "+
+			"-Wshadow -Wformat=2 -Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align "+
+			"-D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -D_FORTIFY_SOURCE=2 "+
+			"-fno-sanitize-recover -fstack-protector "+
+			"%s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
 	case ".go":
 		return fmt.Sprintf("go run %s", filename), nil
 	default:
@@ -399,8 +407,8 @@ func runCmd(client *ssh.Client, filename string) error {
 			case <-quit:
 				return
 			default:
-				io.Copy(os.Stdout, stdoutPipe)
-				io.Copy(os.Stderr, stderrPipe)
+				_, _ = io.Copy(os.Stdout, stdoutPipe)
+				_, _ = io.Copy(os.Stderr, stderrPipe)
 			}
 		}
 	}()
@@ -410,8 +418,8 @@ func runCmd(client *ssh.Client, filename string) error {
 	}
 
 	quit <- true
-	io.Copy(os.Stdout, stdoutPipe)
-	io.Copy(os.Stderr, stderrPipe)
+	_, _ = io.Copy(os.Stdout, stdoutPipe)
+	_, _ = io.Copy(os.Stderr, stderrPipe)
 	return nil
 }
 
@@ -430,12 +438,12 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	if keyPath == "" {
-		user, err := user.Current()
+		curr, err := user.Current()
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		keyPath = fmt.Sprintf("%s-%s.pem", region, user.Username)
+		keyPath = fmt.Sprintf("%s-%s.pem", region, curr.Username)
 		log.Warnf("no key path provided, assuming ./%s", keyPath)
 	}
 
