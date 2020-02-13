@@ -208,6 +208,29 @@ func getSpotInstanceID(svc *ec2.EC2, requestResult *ec2.RequestSpotInstancesOutp
 	return aws.StringValue(describeRes.SpotInstanceRequests[0].InstanceId)
 }
 
+func getInstance(svc *ec2.EC2, instanceID string) (*ec2.Instance, error) {
+	describeInstanceInp := &ec2.DescribeInstancesInput{
+		InstanceIds: aws.StringSlice([]string{instanceID}),
+	}
+
+	describeInstancesRes, err := svc.DescribeInstances(describeInstanceInp)
+	if err != nil {
+		return nil, err
+	}
+
+	for describeInstancesRes.Reservations[0].Instances[0].PublicIpAddress == nil {
+		log.Debug("failed to get public IP address")
+		describeInstancesRes, err = svc.DescribeInstances(describeInstanceInp)
+		if err != nil {
+			return nil, err
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	return describeInstancesRes.Reservations[0].Instances[0], nil
+}
+
 func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, volume int64) (*ec2.Instance, error) {
 	imageID := regionImageIDMap[region]
 	blockDeviceMappings, err := getBlockDeviceMapping(svc, region, volume)
@@ -263,26 +286,7 @@ func runInstance(svc *ec2.EC2, instanceType, keyPath, region string, spot bool, 
 	}
 
 	log.Debug("got instanceID")
-	describeInstanceInp := &ec2.DescribeInstancesInput{
-		InstanceIds: aws.StringSlice([]string{instanceID}),
-	}
-
-	describeInstancesRes, err := svc.DescribeInstances(describeInstanceInp)
-	if err != nil {
-		return nil, err
-	}
-
-	for describeInstancesRes.Reservations[0].Instances[0].PublicIpAddress == nil {
-		log.Debug("failed to get public IP address")
-		describeInstancesRes, err = svc.DescribeInstances(describeInstanceInp)
-		if err != nil {
-			return nil, err
-		}
-
-		time.Sleep(time.Second)
-	}
-
-	return describeInstancesRes.Reservations[0].Instances[0], nil
+	return getInstance(svc, instanceID)
 }
 
 func pemFileToSigner(keyPath string) (ssh.Signer, error) {
