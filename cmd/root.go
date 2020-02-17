@@ -44,6 +44,8 @@ var (
 		"me-south-1":     "ami-054bbb7ef03ab6c36",
 	}
 
+	tenMinutes = 10 * time.Minute
+
 	sshPort       = 22
 	ipPermissions = []*ec2.IpPermission{
 		(&ec2.IpPermission{}).
@@ -63,7 +65,7 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().DurationP("duration", "d", 10*time.Minute, "persistence time of ec2 instance after execution")
+	rootCmd.Flags().DurationP("duration", "d", tenMinutes, "persistence time of ec2 instance after execution")
 	rootCmd.Flags().BoolP("exec", "e", true, "execute the file")
 	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("key-path", "k", "", "key path of valid aws key pair (defaults to creating a new key pair)")
