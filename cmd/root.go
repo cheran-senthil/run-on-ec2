@@ -44,6 +44,8 @@ var (
 		"me-south-1":     "ami-054bbb7ef03ab6c36",
 	}
 
+	tenMinutes = 10 * time.Minute
+
 	sshPort       = 22
 	ipPermissions = []*ec2.IpPermission{
 		(&ec2.IpPermission{}).
@@ -63,7 +65,7 @@ var (
 )
 
 func init() {
-	rootCmd.Flags().IntP("duration", "d", 10, "persistence time in minutes of ec2 instance after execution")
+	rootCmd.Flags().DurationP("duration", "d", tenMinutes, "persistence time of ec2 instance after execution")
 	rootCmd.Flags().BoolP("exec", "e", true, "execute the file")
 	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("key-path", "k", "", "key path of valid aws key pair (defaults to creating a new key pair)")
@@ -409,7 +411,7 @@ func runCmd(client *ssh.Client, filename string) error {
 func run(cmd *cobra.Command, args []string) {
 	filename := args[0]
 
-	duration, _ := cmd.Flags().GetInt("duration")
+	duration, _ := cmd.Flags().GetDuration("duration")
 	execute, _ := cmd.Flags().GetBool("exec")
 	instanceType, _ := cmd.Flags().GetString("instance-type")
 	keyPath, _ := cmd.Flags().GetString("key-path")
@@ -478,7 +480,7 @@ func run(cmd *cobra.Command, args []string) {
 		log.Debug("copied file, sleeping...")
 	}
 
-	time.Sleep(time.Duration(duration) * time.Minute)
+	time.Sleep(duration)
 	if duration >= 0 {
 		atexit(svc, instance, nil)
 	}
