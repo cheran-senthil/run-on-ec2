@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	// "io"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -389,15 +390,15 @@ func runCmd(client *ssh.Client, filename string) error {
 	sess.Stdout = os.Stdout
 	sess.Stderr = os.Stderr
 
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          0,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
-	}
+	// modes := ssh.TerminalModes{
+	// 	ssh.ECHO:          0,
+	// 	ssh.TTY_OP_ISPEED: 14400,
+	// 	ssh.TTY_OP_OSPEED: 14400,
+	// }
 
-	if err := sess.RequestPty("xterm", 40, 80, modes); err != nil {
-		return err
-	}
+	// if err := sess.RequestPty("xterm", 40, 80, modes); err != nil {
+	// 	return err
+	// }
 
 	if err := sess.Run(cmd); err != nil {
 		return err
