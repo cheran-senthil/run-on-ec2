@@ -34,14 +34,12 @@ var (
 		"eu-west-1":      "ami-0c7c05971b840b1d7",
 		"eu-west-2":      "ami-0759ac12b6cf54606",
 		"eu-west-3":      "ami-06afd96b5ad2b5723",
-		// "ap-east-1":      "",
 		"ap-northeast-1": "ami-06ddb00260bea0277",
 		"ap-northeast-2": "ami-075678b0a988afc27",
 		"ap-south-1":     "ami-0d68fc257d4c50d47",
 		"ap-southeast-1": "ami-0ad21e7a624a960fb",
 		"ap-southeast-2": "ami-00b83fc4fd0484104",
 		"sa-east-1":      "ami-0600bb8eb98890e5a",
-		// "me-south-1":     "",
 	}
 
 	tenMinutes = 10 * time.Minute
@@ -380,7 +378,7 @@ func runCmd(client *ssh.Client, filename string) error {
 		return err
 	}
 
-	fmt.Println(cmd)
+	fmt.Fprintln(os.Stderr, "$ " + cmd)
 	sess, err := client.NewSession()
 	if err != nil {
 		return err
