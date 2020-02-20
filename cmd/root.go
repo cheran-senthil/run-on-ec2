@@ -326,6 +326,7 @@ func newSSHClient(keyPath, publicIPAddress string) (*ssh.Client, error) {
 		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), sshClientConfig)
 		time.Sleep(time.Second)
 	}
+	log.Debugf("ssh -i %s arch@%s", keyPath, publicIPAddress)
 
 	return client, err
 }
