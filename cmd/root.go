@@ -25,24 +25,24 @@ import (
 
 var (
 	regionImageIDMap = map[string]string{
-		"us-east-1":      "ami-0f040c7d22aedeb27",
-		"us-east-2":      "ami-0470431e11a734fd9",
-		"us-west-1":      "ami-05cdd0c340f2889fe",
-		"us-west-2":      "ami-0b6363764d2a80871",
-		"ca-central-1":   "ami-01b3269d70a1de16c",
-		"eu-central-1":   "ami-06e882db7f01fad97",
-		"eu-north-1":     "ami-02ae88ed88290671a",
-		"eu-west-1":      "ami-08613bbdd5117c26e",
-		"eu-west-2":      "ami-020f8e712266ac616",
-		"eu-west-3":      "ami-01360f4ce2b7cc8df",
-		"ap-east-1":      "ami-17b3f666",
-		"ap-northeast-1": "ami-0830b6d0901519dfb",
-		"ap-northeast-2": "ami-0e479608b3609ee19",
-		"ap-south-1":     "ami-0280b0286f256a533",
-		"ap-southeast-1": "ami-0ebc029a114aa199e",
-		"ap-southeast-2": "ami-01fdf683a88ff498e",
-		"sa-east-1":      "ami-07183794882825eb4",
-		"me-south-1":     "ami-054bbb7ef03ab6c36",
+		"ap-east-1":      "ami-09b3611e9d731f3b4",
+		"ap-northeast-1": "ami-08ee310349a0df85b",
+		"ap-northeast-2": "ami-0db5f2951c93658b2",
+		"ap-south-1":     "ami-06592cb3fd63c6767",
+		"ap-southeast-1": "ami-018029ff7128c06f8",
+		"ap-southeast-2": "ami-054fc04b2217d0719",
+		"ca-central-1":   "ami-0668b0737a685fb68",
+		"eu-central-1":   "ami-0d59ba6ddd834c1e3",
+		"eu-north-1":     "ami-0edd0ea257a1d21b3",
+		"eu-west-1":      "ami-0d1164d54ebe13f83",
+		"eu-west-2":      "ami-089407877f269b90f",
+		"eu-west-3":      "ami-0bbf159178a567111",
+		"me-south-1":     "ami-066d2930bbaa5db55",
+		"sa-east-1":      "ami-01fa7f1e1b13243b8",
+		"us-east-1":      "ami-02383021a2fd78cb2",
+		"us-east-2":      "ami-054354fb7313ff65a",
+		"us-west-1":      "ami-02a77eb47bc055641",
+		"us-west-2":      "ami-0b9fcf7a2b6c50cb8",
 	}
 
 	tenMinutes = 10 * time.Minute
@@ -318,7 +318,7 @@ func newSSHClient(keyPath, publicIPAddress string) (*ssh.Client, error) {
 
 	log.Debug("got signer")
 	sshClientConfig := &ssh.ClientConfig{
-		User:            "arch",
+		User:            "ec2-user",
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint
 	}
@@ -328,7 +328,7 @@ func newSSHClient(keyPath, publicIPAddress string) (*ssh.Client, error) {
 		client, err = ssh.Dial("tcp", fmt.Sprintf("%s:22", publicIPAddress), sshClientConfig)
 		time.Sleep(time.Second)
 	}
-	log.Debugf("ssh -i %s arch@%s", keyPath, publicIPAddress)
+	log.Debugf("ssh -i %s ec2-user@%s", keyPath, publicIPAddress)
 
 	return client, err
 }
