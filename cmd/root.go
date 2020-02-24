@@ -371,6 +371,8 @@ func getCmd(filename string) (string, error) {
 			fmt.Sprintf("%s -o %s && ./%s", filename, filenameWithoutExt, filenameWithoutExt), nil
 	case ".go":
 		return fmt.Sprintf("go run %s", filename), nil
+	case ".hs":
+		return fmt.Sprintf("ghc %s && ./%s", filename, filenameWithoutExt), nil
 	default:
 		return fmt.Sprintf("chmod +x %s && ./%s", filename, filename), nil
 	}
