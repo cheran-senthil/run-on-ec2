@@ -69,7 +69,7 @@ func init() {
 	rootCmd.Flags().BoolP("exec", "e", true, "execute the file")
 	rootCmd.Flags().StringP("instance-type", "i", "t2.micro", "ec2 instance type")
 	rootCmd.Flags().StringP("key-path", "k", "", "key path of valid aws key pair (defaults to creating a new key pair)")
-	rootCmd.Flags().StringP("region", "r", "eu-central-1", "aws session region")
+	rootCmd.Flags().StringP("region", "r", "us-east-2", "aws session region")
 	rootCmd.Flags().BoolP("spot", "s", true, "request spot instances")
 	rootCmd.Flags().BoolP("verbose", "v", false, "verbose logs (default false)")
 	rootCmd.Flags().Int64P("volume", "m", 8, "volume attached in GiB")
@@ -383,7 +383,7 @@ func runCmd(client *ssh.Client, filename string) error {
 		return err
 	}
 
-	fmt.Fprintln(os.Stderr, "$ " + cmd)
+	fmt.Fprintln(os.Stderr, "$ "+cmd)
 	sess, err := client.NewSession()
 	if err != nil {
 		return err

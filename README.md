@@ -39,7 +39,7 @@ Flags:
   -h, --help                   help for run-on-ec2
   -i, --instance-type string   ec2 instance type (default "t2.micro")
   -k, --key-path string        key path of valid aws key pair (defaults to creating a new key pair)
-  -r, --region string          aws session region (default "eu-central-1")
+  -r, --region string          aws session region (default "us-east-2")
   -s, --spot                   request spot instances (default true)
   -v, --verbose                verbose logs (default false)
   -m, --volume int             volume attached in GiB (default 8)
