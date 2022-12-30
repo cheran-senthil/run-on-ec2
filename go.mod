@@ -3,7 +3,7 @@ module github.com/cheran-senthil/run-on-ec2
 go 1.15
 
 require (
-	github.com/aws/aws-sdk-go v1.28.9
+	github.com/aws/aws-sdk-go v1.33.0
 	github.com/hnakamur/go-scp v0.0.0-20190410043705-badb3bf1aae2
 	github.com/sirupsen/logrus v1.4.2
 	github.com/spf13/cobra v0.0.5
