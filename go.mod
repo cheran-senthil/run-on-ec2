@@ -7,5 +7,5 @@ require (
 	github.com/hnakamur/go-scp v0.0.0-20190410043705-badb3bf1aae2
 	github.com/sirupsen/logrus v1.4.2
 	github.com/spf13/cobra v0.0.5
-	golang.org/x/crypto v0.0.0-20200128174031-69ecbb4d6d5d
+	golang.org/x/crypto v0.1.0
 )
